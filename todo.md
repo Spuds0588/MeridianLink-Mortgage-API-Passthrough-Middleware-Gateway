@@ -3,6 +3,11 @@
 Single source of truth for work in progress. Append to `history.md` when an item changes state.
 Legend: `[ ]` pending · `[~]` in progress · `[x]` done · `[—]` deliberately deferred (YAGNI / blocked)
 
+## Priority 1 — Loan file documents & condition responses
+
+- [x] Condition submission: `POST /v1/loans/{id}/conditions` (broker persona) queued through FIFO as MISMO `<CONDITIONS>`, matched by description (commit `1ba6fd1`)
+- [—] Loan document upload/download (blocked: needs `EDocsService.asmx` SOAP transport plus an `AuthService.asmx` ticket cache in `src/meridian.js`, metadata/download routes in `src/app.js`, and roughly 2 KB more bundle than the 19 bytes left under CloudFormation's 51,200-byte direct-upload limit; unblock by shrinking the bundle or changing the deploy artifact path first)
+
 ## Phase 1 — Core Infrastructure
 
 - [x] Zero-dependency Node runtime, API-Gateway-shaped events (`src/app.js`, `src/server.js`, `src/lambda.js`)
@@ -34,7 +39,7 @@ Legend: `[ ]` pending · `[~]` in progress · `[x]` done · `[—]` deliberately
 - [x] Broker capability audit (2026-11-06): partial 1003 read, fee-only writes, no document or condition writes
 - [x] `PATCH /v1/loans/{id}` returns `501` instead of acting as an undocumented fees alias
 - [x] Fee writes reject the read-only `AMC_VENDOR` persona before any job is created (commit `4aa360e`); title and broker personas keep write access
-- [—] Full 1003 read/write, borrower document upload, and condition responses (blocked: needs sanitized MeridianLink MISMO samples plus confirmed vendor endpoints; inventing shapes would violate the no-guess rule)
+- [—] Full 1003 read/write (blocked: needs sanitized MeridianLink MISMO samples; inventing shapes would violate the no-guess rule)
 - [—] Per-loan organization scoping (blocked: the MISMO samples carry no loan-to-organization field; until then any valid key can request any loan ID the shared credential reaches)
 
 ## Phase 5 — Self-Serve Onboarding (sister-project parity)

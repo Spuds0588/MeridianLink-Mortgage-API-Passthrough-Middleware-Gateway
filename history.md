@@ -4,6 +4,38 @@ Append-only. Newest entries at the top. Never rewrite past entries; add a correc
 
 ---
 
+## 2026-11-06 — Broker condition submission through the FIFO pipeline
+
+**Why.** Conditions were readable but could not be answered, which blocks the main broker workflow. The
+MeridianLink integration documentation states that conditions are matched by description and that a save
+only updates the rows included in the payload, so a partial condition update is a documented behavior rather
+than an invented merge rule.
+
+**Changed**
+
+- `POST /v1/loans/{id}/conditions` for the `TPO_BROKER` persona, accepting `{ conditions: [{ description,
+  status }] }`, validated to 100 rows with 200/50-character limits, returning `202` and a job ID.
+- `src/mismo.js`: `conditionsToXml` emits MISMO `<CONDITIONS>` and shares one `mismoUpdate` wrapper with
+  `feesToXml` to keep the bundle inside the deployment limit.
+- `src/writes.js`, `src/lambda.js`, `dev/local-runner.js`: the queue message now carries prebuilt MISMO XML
+  (`mismo`) instead of a fees array, so fee and condition writes share one delivery and retry path.
+- `src/meridian.js`: `updateFees` renamed to `updateLoan` to match the generalized pipeline.
+- `src/portal.js`: portal CSS trimmed to make room for the new code; the template is 51,181 bytes, 19 bytes
+  under CloudFormation's 51,200-byte limit.
+- `README.md`, `llms.txt`, `index.html`: condition submission documented, document coverage still listed as
+  missing, and the FAQ/JSON-LD answer corrected.
+- `todo.md`: documents and conditions moved to a Priority 1 section.
+
+**Verified.** `npm run verify`: 53 tests, 53 pass, 0 fail. The new tests cover broker submission end to end
+(queue payload, worker completion, upstream XML), broker-only authorization, and validation failures. Not
+verified: real MeridianLink condition semantics, since there is no tenant access.
+
+**Still blocked.** Document upload/download needs the EDocs SOAP service and an AuthService ticket, plus
+about 2 KB of bundle headroom that does not exist today (19 bytes remain). `todo.md` records the exact
+unblock requirement.
+
+---
+
 ## 2026-11-06 — Close the AMC fee-write authorization gap
 
 **Finding.** `enqueueWrite` authorized any valid tenant without checking the persona, so an `AMC_VENDOR`
