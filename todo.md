@@ -6,7 +6,8 @@ Legend: `[ ]` pending · `[~]` in progress · `[x]` done · `[—]` deliberately
 ## Priority 1 — Loan file documents & condition responses
 
 - [x] Condition submission: `POST /v1/loans/{id}/conditions` (broker persona) queued through FIFO as MISMO `<CONDITIONS>`, matched by description (commit `1ba6fd1`)
-- [—] Loan document upload/download (blocked: needs `EDocsService.asmx` SOAP transport plus an `AuthService.asmx` ticket cache in `src/meridian.js`, metadata/download routes in `src/app.js`, and roughly 2 KB more bundle than the 19 bytes left under CloudFormation's 51,200-byte direct-upload limit; unblock by shrinking the bundle or changing the deploy artifact path first)
+- [x] Loan document upload/download: `POST /v1/loans/{id}/documents` (broker persona, base64 PDF, 180,000-byte SQS cap), `GET /v1/loans/{id}/documents`, and `GET /v1/loans/{id}/documents/{docId}` through `EDocsService.asmx` with a cached `AuthService.asmx` ticket (commit `93d43e7`)
+- [—] Live EDocs validation (blocked: no MeridianLink tenant; the SOAP response shapes and default `/edocs` mount path are verified only against `mock/meridian.js`)
 
 ## Phase 1 — Core Infrastructure
 
@@ -36,7 +37,7 @@ Legend: `[ ]` pending · `[~]` in progress · `[x]` done · `[—]` deliberately
 - [x] Retry classification: `423`/`429`/`5xx`/transport retried; permanent rejections `FAILED`
 - [x] `GET /v1/jobs/{jobId}` with tenant ownership (foreign jobs → `404`)
 - [x] Job TTL, no fee payload persisted in the job record
-- [x] Broker capability audit (2026-11-06): partial 1003 read, fee-only writes, no document or condition writes
+- [x] Broker capability audit (2026-11-06): partial 1003 read, fee-only writes, no document or condition writes (superseded for conditions by `1ba6fd1` and documents by `93d43e7`)
 - [x] `PATCH /v1/loans/{id}` returns `501` instead of acting as an undocumented fees alias
 - [x] Fee writes reject the read-only `AMC_VENDOR` persona before any job is created (commit `4aa360e`); title and broker personas keep write access
 - [—] Full 1003 read/write (blocked: needs sanitized MeridianLink MISMO samples; inventing shapes would violate the no-guess rule)
@@ -53,7 +54,8 @@ Legend: `[ ]` pending · `[~]` in progress · `[x]` done · `[—]` deliberately
 
 ## Phase 6 — Packaging, Distribution & Verification
 
-- [x] `scripts/build.js`: bundle `src/` → `dist/gateway.js`, inline into `template.yaml`, 51,200-byte guard, `--check`
+- [x] `scripts/build.js`: bundle `src/` → readable `dist/gateway.js`, minify the inlined copy (comments/whitespace, no dependency), 51,200-byte guard, `--check`
+- [x] Template headroom restored: 49,173 bytes, 2,027 bytes under the limit, with a 1 KB minimum enforced by `test/template.test.js` (commit `93d43e7`)
 - [x] `infra/template.yaml`: VPC + NAT + static EIP, DynamoDB, SQS FIFO + DLQ, Secrets Manager, API Gateway usage plan, inline Lambda
 - [x] `deploy.sh` one-line CloudShell installer (prompts for Meridian creds, generates invite codes, prints invite links + egress IP)
 - [x] CI (`.github/workflows/ci.yml`): tests + template-sync on Node 20 and 24

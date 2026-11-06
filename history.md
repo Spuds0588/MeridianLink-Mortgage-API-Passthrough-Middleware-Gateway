@@ -4,6 +4,49 @@ Append-only. Newest entries at the top. Never rewrite past entries; add a correc
 
 ---
 
+## 2026-11-06 — EDocs document upload, list, and download; template headroom restored
+
+**Why.** Document exchange is the highest-value broker workflow after conditions, and it was blocked by two
+separate problems: no EDocs transport and only 19 bytes of template headroom. Solving only the transport
+would have produced code that could not be deployed.
+
+**Size strategy.** `scripts/build.js` now minifies the inlined Lambda copy (strings, templates, and regex
+literals preserved; whitespace and comments removed) instead of only stripping full-line comments. It is a
+zero-dependency tokenizer, not a third-party minifier. The readable `dist/gateway.js` is unchanged in role,
+and the deploy stays one inline CloudFormation file with no S3 or zip. Result: **49,173 bytes, 2,027 bytes
+under the 51,200-byte limit** (previously 51,181 bytes, 19 bytes under), with a 1 KB minimum asserted in
+`test/template.test.js`. The build also parses the minified output before writing it.
+
+**Changed**
+
+- `src/meridian.js`: `EDocsService.asmx` SOAP 1.1 client with `ListEdocsByLoanNumber`, `UploadPDFDocument`,
+  and `DownloadEdocsPdfById`; `AuthService.asmx` `GetUserAuthTicket` cached for 50 minutes per Lambda
+  container and refreshed once on a `401`/`403`. The EDocs mount path defaults to `<baseUrl>/edocs`.
+- `src/app.js`: broker-only `POST /v1/loans/{id}/documents` validates `documentType` (max 100), `notes` (max
+  500), base64 syntax, the `%PDF-` signature, and a 180,000-byte decoded cap before creating a job. It returns
+  `202` plus the standard status URL. `GET /v1/loans/{id}/documents` returns IDs/types/names; `GET
+  /v1/loans/{id}/documents/{docId}` returns `{ documentId, contentType: "application/pdf", contentBase64 }`.
+- `src/writes.js`, `src/lambda.js`, `dev/local-runner.js`: the queue message carries either `mismo` or `doc`;
+  the worker calls `uploadDocument` for documents and keeps the existing retry/backoff/DLQ behavior. The job
+  record still contains no payload.
+- `src/edocs.js`: parses EDocs `edoc` attributes and the base64 download result.
+- `mock/meridian.js`: fake SOAP `AuthService`/`EDocsService` with ticket issuance, per-loan documents, list,
+  download, and ticket counters, so tests exercise the real envelope and parser.
+- `README.md`, `llms.txt`, `index.html`, `AGENTS.md`: document routes, broker-only authorization, the 180 KB
+  SQS cap, the minifier, and the unverified EDocs shapes.
+
+**Verified.** `npm run verify`: 58 tests, 58 pass, 0 fail. New coverage: upload 202 → queue payload → worker →
+SOAP envelope → fake EDocs document; list and download round-trip; ticket reuse across writes and reads;
+non-broker rejections; invalid base64 (`400`), non-PDF (`415`), oversized (`413`), and missing fields (`400`);
+EDocs auth failure (`502`); and execution of the exact minified inline bundle.
+
+**Not verified.** No MeridianLink tenant exists here, so the SOAP response shapes and the `/edocs` mount path
+are assumptions checked only against the local fake. Uploads over 180,000 bytes are rejected because the PDF
+travels inside the SQS message; an S3 staging hop would be the next architecture change if deployments need
+larger files. The production GitHub Pages copy is verified after push; there is no deployed AWS API to call.
+
+---
+
 ## 2026-11-06 — Broker condition submission through the FIFO pipeline
 
 **Why.** Conditions were readable but could not be answered, which blocks the main broker workflow. The
