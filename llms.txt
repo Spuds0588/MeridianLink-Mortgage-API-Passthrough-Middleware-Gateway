@@ -38,7 +38,7 @@ The maintainer cannot access a MeridianLink tenant or a lender AWS account, so r
 - `PATCH /v1/loans/{loanId}/fees` with `{ "fees": [{ "feeType": "...", "amount": 1350 }] }`
 - `GET /v1/jobs/{jobId}`
 
-All `/v1/*` routes require `x-api-key`. The portal and health check are the only unauthenticated HTTP routes.
+All `/v1/*` routes require `x-api-key`. The portal and health check are the only unauthenticated HTTP routes. Fee writes are accepted only from `TITLE_VENDOR` and `TPO_BROKER`; an `AMC_VENDOR` key receives `403` and no job is queued.
 
 ## Deploy and verify locally
 

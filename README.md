@@ -100,7 +100,7 @@ curl -s "$GATEWAY_URL/v1/jobs/$JOB_ID" -H "x-api-key: $KEY"
 | `PATCH` | `/v1/loans/{id}` | `x-api-key` | `501` — only fee writes are implemented |
 | `GET` | `/v1/jobs/{id}` | `x-api-key` | `{ jobId, loanId, status, attempts, createdAt, updatedAt, error }` |
 
-Job statuses: `PENDING` → `RETRYING` → `COMPLETED` / `FAILED`. Fee arrays are capped at 100 items.
+Job statuses: `PENDING` → `RETRYING` → `COMPLETED` / `FAILED`. Fee arrays are capped at 100 items. Fee writes are accepted only from `TITLE_VENDOR` and `TPO_BROKER`; an `AMC_VENDOR` key receives `403`.
 
 ### Roles and personas
 

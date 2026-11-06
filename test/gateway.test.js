@@ -331,6 +331,19 @@ test("broker writes are limited to fees; 1003, document and condition writes fai
   assert.equal(fees.statusCode, 202);
 });
 
+test("appraisal persona cannot write fees", async (t) => {
+  const { call, tenantKey, store } = await setup(t);
+  const amc = await tenantKey({ role: "appraisal", code: INVITES.appraisal, tenantName: "Acme Appraisal", email: "amc@acme.test" });
+
+  const res = await call("PATCH", "/v1/loans/ML-998822/fees", {
+    apiKeyId: amc.apiKeyId,
+    body: { fees: [{ feeType: "AppraisalFee", amount: 450 }] }
+  });
+  assert.equal(res.statusCode, 403);
+  assert.match(JSON.parse(res.body).error, /cannot write fees/);
+  assert.equal(store.queue.length, 0, "a rejected write must not enqueue a job");
+});
+
 test("unknown routes and wrong methods are rejected", async (t) => {
   const { call } = await setup(t);
   assert.equal((await call("GET", "/v1/nope")).statusCode, 404);

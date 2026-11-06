@@ -139,6 +139,7 @@ function createApp({ store, meridian, env = process.env, now = () => Date.now() 
   async function enqueueWrite(event, apiKeyId, loanId) {
     const tenant = await tenantFor(apiKeyId);
     if (!tenant) return error(403, "Unauthorized tenant mapping");
+    if (!["TITLE_VENDOR", "TPO_BROKER"].includes(tenant.persona)) return error(403, "Persona cannot write fees");
 
     let payload;
     try {
