@@ -30,6 +30,11 @@ Upstream the smallest fix so the next deployment benefits.
 
 ## Before opening an issue
 
+Use the guided forms: [bug report](https://github.com/Spuds0588/MeridianLink-Mortgage-API-Passthrough-Middleware-Gateway/issues/new?template=bug_report.yml)
+or [feature/improvement](https://github.com/Spuds0588/MeridianLink-Mortgage-API-Passthrough-Middleware-Gateway/issues/new?template=feature_improvement.yml).
+They require a sanitized reproduction, the commit you tested, and an explicit redaction confirmation. The
+chooser also links back to this guide.
+
 1. Search [existing issues](https://github.com/Spuds0588/MeridianLink-Mortgage-API-Passthrough-Middleware-Gateway/issues) first.
 2. Run `npm run verify` and include the result.
 3. Try to reproduce with the local fake in `mock/meridian.js` and the local stack with `npm run dev`.
@@ -74,7 +79,9 @@ channel.
 6. Update the relevant docs when behavior, API, deployment, or security changes: `README.md`, `AGENTS.md`,
    `llms.txt`, `index.html`, and `todo.md`. Maintainers should also append to `history.md`; it is an
    append-only work log.
-7. Open the pull request with:
+7. Open the pull request using the repository's PR template. It requires what you actually verified, what you
+   could not validate against a real MeridianLink tenant or a live AWS deployment, a regression test for bug
+   fixes, and confirmation that no secrets or loan data are included. Also include:
    - What changed and why.
    - Tests run and their results.
    - What was not tested, especially live MeridianLink or AWS behavior.

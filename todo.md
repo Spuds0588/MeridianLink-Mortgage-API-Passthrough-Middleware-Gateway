@@ -53,4 +53,10 @@ Legend: `[ ]` pending · `[~]` in progress · `[x]` done · `[—]` deliberately
 - [x] Community direction codified in `AGENTS.md` §0 (file issues, upstream fixes, recruit contributors)
 - [x] Static guard tests keep the issue/PR/contributor direction from rotting
 - [—] Live AWS deployment + MeridianLink calls (blocked: no AWS account or vendor access)
-- [—] Issue/PR templates and a designated triage rotation (needs repo settings or a maintainer decision)
+- [x] Guided issue forms: `.github/ISSUE_TEMPLATE/bug_report.yml` and `feature_improvement.yml` (sanitization fields required)
+- [x] Issue chooser config (`.github/ISSUE_TEMPLATE/config.yml`) links `CONTRIBUTING.md` and the support/issues surface
+- [x] PR template (`.github/pull_request_template.md`): actual verification, regression test, not-validated-against-tenant/deploy disclosure
+- [x] Static guards over forms, config, and template so the scaffolding cannot silently rot
+- [—] Enable GitHub Discussions so the support contact can move off the issues list (maintainer action; verified 404 today)
+- [—] Enable GitHub Pages on `main` / root so the canonical landing-page URL resolves (maintainer action)
+- [—] Contributor invitations and a designated triage rotation (maintainer action)

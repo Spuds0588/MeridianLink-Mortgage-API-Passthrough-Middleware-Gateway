@@ -10,6 +10,8 @@ The maintainer cannot access a MeridianLink tenant or a lender AWS account, so r
 - [README](https://github.com/Spuds0588/MeridianLink-Mortgage-API-Passthrough-Middleware-Gateway/blob/main/README.md): deployment, API, security, and known limitations.
 - [Agent directions](https://github.com/Spuds0588/MeridianLink-Mortgage-API-Passthrough-Middleware-Gateway/blob/main/AGENTS.md): operating manual for coding agents and maintainers.
 - [Contributing guide](https://github.com/Spuds0588/MeridianLink-Mortgage-API-Passthrough-Middleware-Gateway/blob/main/CONTRIBUTING.md): bug reports, pull requests, tests, and redaction rules.
+- [Issue forms](https://github.com/Spuds0588/MeridianLink-Mortgage-API-Passthrough-Middleware-Gateway/issues/new/choose): guided bug report and feature/improvement forms with required sanitized reproduction, commit SHA, and redaction confirmation.
+- [Pull request template](https://github.com/Spuds0588/MeridianLink-Mortgage-API-Passthrough-Middleware-Gateway/blob/main/.github/pull_request_template.md): requires verified-vs-unverified disclosure, a regression test for bug fixes, and a redaction confirmation.
 - [Source code](https://github.com/Spuds0588/MeridianLink-Mortgage-API-Passthrough-Middleware-Gateway): handler, template, tests, installer, and local fakes.
 - [Open issues](https://github.com/Spuds0588/MeridianLink-Mortgage-API-Passthrough-Middleware-Gateway/issues): check for an existing report before opening a new one.
 - [Pull requests](https://github.com/Spuds0588/MeridianLink-Mortgage-API-Passthrough-Middleware-Gateway/pulls): fixes, tests, docs, and sanitized MISMO shape fixtures are welcome.

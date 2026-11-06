@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Contributing guide — read this first
+    url: https://github.com/Spuds0588/MeridianLink-Mortgage-API-Passthrough-Middleware-Gateway/blob/main/CONTRIBUTING.md
+    about: Issue requirements, redaction rules, test commands, and how to become a contributor.
+  - name: Ask a question or share a deployment report
+    url: https://github.com/Spuds0588/MeridianLink-Mortgage-API-Passthrough-Middleware-Gateway/issues
+    about: Search existing reports or follow up on one with sanitized evidence. Never post API keys, invite codes, tenant credentials, loan data, or borrower PII.

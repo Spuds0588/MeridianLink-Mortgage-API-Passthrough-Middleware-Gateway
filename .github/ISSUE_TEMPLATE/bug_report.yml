@@ -1,0 +1,110 @@
+name: Bug report
+description: A reproducible defect in the gateway, template, local fake, or docs. Sanitize everything before posting.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting back. This project is community-supported: the maintainer has **no MeridianLink
+        tenant and no AWS account for this project**, so your report is the only way a real defect gets fixed.
+
+        Before filing, read [CONTRIBUTING.md](https://github.com/Spuds0588/MeridianLink-Mortgage-API-Passthrough-Middleware-Gateway/blob/main/CONTRIBUTING.md)
+        and search [existing issues](https://github.com/Spuds0588/MeridianLink-Mortgage-API-Passthrough-Middleware-Gateway/issues?q=is%3Aissue).
+
+        **Never include** API keys, invite codes, passwords, client secrets, tenant credentials, loan data,
+        borrower PII, or full upstream payloads. Redact first; rotate anything you already exposed.
+
+  - type: dropdown
+    id: environment
+    attributes:
+      label: Where did you see this?
+      description: Local fakes, CI, and a deployed stack fail in different ways. Say which one you actually ran.
+      options:
+        - Local fake (`npm run dev` / `npm test`)
+        - Deployed AWS stack, mock or sandbox MeridianLink
+        - Deployed AWS stack with a real MeridianLink tenant
+        - Local fake plus a deployed stack
+        - Template or docs inspection only
+    validations:
+      required: true
+
+  - type: input
+    id: commit
+    attributes:
+      label: Commit SHA tested
+      description: The exact commit you ran. A report against an unknown revision cannot be reproduced.
+      placeholder: fc857c6
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Minimal reproduction
+      description: The smallest sequence that shows the defect, one endpoint and one behavior if possible.
+      placeholder: |
+        1. npm run dev
+        2. POST /portal with role=title and the local invite code
+        3. GET /v1/loans/ML-998822 with x-api-key
+        4. Fees array is empty although the fixture contains two fees
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected vs actual
+      description: What should have happened, and what happened instead.
+      placeholder: |
+        Expected: fees contains two entries with feeType and amount.
+        Actual: fees is [] and the response is still 200.
+    validations:
+      required: true
+
+  - type: input
+    id: verify_result
+    attributes:
+      label: npm run verify output
+      description: Paste the summary line (pass and fail counts). Run it before filing.
+      placeholder: "# tests 42 / # pass 42 / # fail 0"
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Sanitized evidence
+      description: Redacted request/response excerpts or log lines. Replace keys, tenant names, borrower names, and loan IDs you do not own.
+      render: text
+      placeholder: |
+        Request: GET /v1/loans/ML-REDACTED
+        Response: {"loanId":"ML-REDACTED","milestone":"Application","fees":[]}
+        Log: {"action":"READ_UPSTREAM_FAILED","status":502}
+    validations:
+      required: true
+
+  - type: input
+    id: node_version
+    attributes:
+      label: Node.js version
+      description: The Lambda runtime is Node.js 20; the test suite also runs on 24.
+      placeholder: v20.18.0
+
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else?
+      description: Related issues, a failing test you already wrote, or the MISMO shape you expected.
+
+  - type: checkboxes
+    id: redaction
+    attributes:
+      label: Redaction and disclosure
+      options:
+        - label: I removed all API keys, invite codes, passwords, client secrets, tenant credentials, loan data, and borrower PII from this report, its attachments, and its logs.
+          required: true
+        - label: I did not test against production loan data.
+          required: true
+        - label: I understand this is community-supported, that the maintainer cannot verify a MeridianLink tenant or AWS stack, and that I will state plainly what I actually ran.
+          required: true

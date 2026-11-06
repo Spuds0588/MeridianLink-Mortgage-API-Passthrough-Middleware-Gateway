@@ -14,8 +14,11 @@ This is an independent, community-supported template, not a vendor product, and 
 MeridianLink. The maintainer has **no MeridianLink access and no AWS account for this project**, so every
 deployment is also a test. Issues and pull requests are therefore the roadmap, not a support channel:
 
-- **Found a bug?** [Open an issue](https://github.com/Spuds0588/MeridianLink-Mortgage-API-Passthrough-Middleware-Gateway/issues/new)
-  with a minimal reproduction, the commit you tested, and sanitized logs.
+- **Found a bug?** [Open the bug report form](https://github.com/Spuds0588/MeridianLink-Mortgage-API-Passthrough-Middleware-Gateway/issues/new?template=bug_report.yml)
+  with a minimal reproduction, the commit you tested, and sanitized logs. Feature ideas use the
+  [improvement form](https://github.com/Spuds0588/MeridianLink-Mortgage-API-Passthrough-Middleware-Gateway/issues/new?template=feature_improvement.yml).
+- **Opening a pull request?** The [PR template](.github/pull_request_template.md) requires what you actually
+  verified, what you could not validate, and a regression test for bug fixes.
 - **Fixed something?** [Open a pull request](https://github.com/Spuds0588/MeridianLink-Mortgage-API-Passthrough-Middleware-Gateway/pulls)
   with a regression test and the docs updated.
 - **Validated a MISMO shape or a real deployment?** Report the sanitized result on the relevant issue. That

@@ -4,6 +4,47 @@ Append-only. Newest entries at the top. Never rewrite past entries; add a correc
 
 ---
 
+## 2026-11-06 — Guided issue and PR intake
+
+**Requirement.** The docs, README, and landing page told contributors to open issues and pull requests,
+but `issues/new` and `/pulls` led to blank forms. The contribution path is now usable end to end from the
+repository alone, with no account or repository-setting access required.
+
+**Changed**
+
+- `.github/ISSUE_TEMPLATE/bug_report.yml`: environment dropdown (local fake, deployed stack, real tenant,
+  combination, inspection only), required commit SHA, minimal reproduction, expected vs actual, `npm run
+  verify` output, and sanitized evidence; required redaction checklist forbidding API keys, invite codes,
+  passwords, client secrets, tenant credentials, loan data, and borrower PII, plus no-production-loan-data
+  and verification-honesty acknowledgements.
+- `.github/ISSUE_TEMPLATE/feature_improvement.yml`: area, problem, smallest proposal (YAGNI), alternatives,
+  how it would be verified, whether the reporter can implement it, and required search/no-secrets/
+  scope-expectation acknowledgements.
+- `.github/ISSUE_TEMPLATE/config.yml`: contact links to `CONTRIBUTING.md` and to the issues list as the
+  support and deployment-report surface. Blank issues stay enabled because GitHub Discussions is not enabled
+  on this repository (verified HTTP 404), so a discussions-only entry point would dead-end.
+- `.github/pull_request_template.md`: what changed, linked issue, actual `npm run verify`/build results, a
+  required regression test for bug fixes, an explicit "not validated against a real MeridianLink tenant" and
+  "not validated against a live AWS deployment" disclosure with a place to explain what remains unproven,
+  redaction and no-storage checks, docs checklist, and reviewer notes.
+- `CONTRIBUTING.md`, `README.md`, `llms.txt`, `index.html`: deep-link the bug and improvement forms and point
+  PR authors at the template. README and llms.txt now link the PR template file directly.
+- `test/static.test.js`: six new guards for form structure (required fields and required checkboxes), the
+  chooser config's contributing and support links, the PR template's verification and redaction language, and
+  the fact that every documented issue/PR link resolves to shipped scaffolding.
+
+**Correction.** The previous entry and `todo.md` said issue/PR templates needed repository settings or a
+maintainer decision. They do not: `.github/ISSUE_TEMPLATE/*` and `.github/pull_request_template.md` are
+ordinary repository files, and GitHub serves them as soon as they are on the default branch. The remaining
+maintainer actions are enabling GitHub Pages, optionally enabling Discussions, and inviting contributors.
+
+**Verified.** `npm run verify`: 47 tests, 47 pass, 0 fail; `template.yaml` unchanged at 50,858 bytes. The
+three YAML files parse with PyYAML and report the intended required fields. Issue forms were not rendered in
+GitHub's UI (no authenticated account access), so form rendering on github.com remains unverified until the
+files are on `main` and a browser opens `issues/new/choose`.
+
+---
+
 ## 2026-11-06 — Aggressive community maintenance
 
 **Requirement.** The sister project asks deployers to report back; this repository did not. The maintainer

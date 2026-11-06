@@ -1,0 +1,86 @@
+name: Feature or improvement
+description: Propose the smallest change that solves a real deployment problem. YAGNI applies.
+title: "[Improvement]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This gateway is deliberately small and stateless: no runtime dependencies, no stored loan data, no
+        field translation dictionary, and no speculative configuration knobs. Read
+        [AGENTS.md](https://github.com/Spuds0588/MeridianLink-Mortgage-API-Passthrough-Middleware-Gateway/blob/main/AGENTS.md)
+        and [CONTRIBUTING.md](https://github.com/Spuds0588/MeridianLink-Mortgage-API-Passthrough-Middleware-Gateway/blob/main/CONTRIBUTING.md)
+        before proposing scope. Never include secrets, credentials, or borrower PII here.
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Loan reads / MISMO conversion
+        - Fee writes / retry and job behavior
+        - Masking and persona allowlists (NPI)
+        - Invite onboarding and API keys
+        - CloudFormation template / deployment / egress
+        - Field schema discovery
+        - Local fakes, tests, or tooling
+        - Documentation, agent directions, or landing page
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem this solves
+      description: Describe the real deployment or integration problem, not the feature you have in mind. Who hits it and what does it cost them?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Smallest proposed change
+      description: The smallest change that fixes the problem. Mention what you deliberately would not add.
+      placeholder: |
+        Accept an optional `X-Request-Id` and echo it in the job document so a lender can correlate
+        retries. No new endpoints, no new dependencies, no stored payloads.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Including doing nothing. Say why the smallest option is not enough.
+
+  - type: textarea
+    id: verification
+    attributes:
+      label: How would we know it works?
+      description: The test, fixture, or real-environment observation that would prove it. If it needs a real MeridianLink tenant or a live AWS deploy, say so here.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: implementer
+    attributes:
+      label: Can you implement it?
+      description: A report with no patch is still useful, but say which case you are in so nobody waits on a fix that is not coming.
+      options:
+        - Yes, I can open a pull request
+        - Yes, with guidance on the smallest approach
+        - No, reporting only
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: agreements
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues and pull requests for the same proposal.
+          required: true
+        - label: This request contains no API keys, invite codes, passwords, client secrets, loan data, or borrower PII.
+          required: true
+        - label: I understand the maintainer cannot access MeridianLink or AWS for this project, so scope is limited to what can be tested locally or contributed by deployers.
+          required: true
