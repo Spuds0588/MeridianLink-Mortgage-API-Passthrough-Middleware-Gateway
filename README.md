@@ -8,6 +8,26 @@ The whole stack deploys into the lender's AWS account from a single file.
 Sister project: [Encompass API Passthrough Middleware Gateway](https://github.com/Spuds0588/Encompass-API-Passhrough-Middleware-Gateway-).
 This repository follows the same runtime and deployment patterns where they fit MeridianLink.
 
+## Community-supported — contribute aggressively
+
+This is an independent, community-supported template, not a vendor product, and it is not affiliated with
+MeridianLink. The maintainer has **no MeridianLink access and no AWS account for this project**, so every
+deployment is also a test. Issues and pull requests are therefore the roadmap, not a support channel:
+
+- **Found a bug?** [Open an issue](https://github.com/Spuds0588/MeridianLink-Mortgage-API-Passthrough-Middleware-Gateway/issues/new)
+  with a minimal reproduction, the commit you tested, and sanitized logs.
+- **Fixed something?** [Open a pull request](https://github.com/Spuds0588/MeridianLink-Mortgage-API-Passthrough-Middleware-Gateway/pulls)
+  with a regression test and the docs updated.
+- **Validated a MISMO shape or a real deployment?** Report the sanitized result on the relevant issue. That
+  evidence is more valuable than a speculative patch.
+- **Want to help long term?** The maintainer is happy to add contributors: say so on your issue or PR.
+
+Start with [CONTRIBUTING.md](CONTRIBUTING.md), the agent operating manual in [AGENTS.md](AGENTS.md), and
+[llms.txt](llms.txt) for machine-readable context. The public overview lives at
+[index.html](index.html) (GitHub Pages). Privately-patched forks are discouraged: upstream the smallest
+fix so the next deployment benefits. Never include API keys, invite codes, passwords, loan data, or
+borrower PII in an issue, PR, screenshot, or log.
+
 ## Deploy (AWS CloudShell, ~3 minutes)
 
 ```shell
@@ -166,6 +186,10 @@ no admin dashboard. Read responses are not cached server-side by design.
 
 ## Docs
 
-- `AGENTS.md` — operating manual (YAGNI, one-line preference, security invariants, dev-env hygiene).
+- `AGENTS.md` — operating manual (YAGNI, one-line preference, security invariants, dev-env hygiene,
+  community-maintenance duties).
+- `CONTRIBUTING.md` — issue and pull-request workflow, sanitization rules, contributor invitations.
+- `llms.txt` — compact machine-readable guide for LLMs and coding agents.
+- `index.html` — static project page served from GitHub Pages (enable Pages on `main` / root to publish it).
 - `todo.md` — task tracker. `history.md` — append-only decision log.
 - `chat-branch-of-encompass-api-middle-google-ai-studio-2026-11-06-1602.md` — original master dev doc.

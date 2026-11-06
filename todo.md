@@ -49,5 +49,8 @@ Legend: `[ ]` pending · `[~]` in progress · `[x]` done · `[—]` deliberately
 - [x] CI (`.github/workflows/ci.yml`): tests + template-sync on Node 20 and 24
 - [x] Tests: translation, masking, invites, schema cache, reads, writes/retries, ownership, `createDevGateway` HTTP e2e, template guards, executed inline bundle
 - [x] `npm run verify` green; committed and pushed
+- [x] Community surfaces: `CONTRIBUTING.md`, `llms.txt`, GitHub Pages `index.html`, contributor invitations
+- [x] Community direction codified in `AGENTS.md` §0 (file issues, upstream fixes, recruit contributors)
+- [x] Static guard tests keep the issue/PR/contributor direction from rotting
 - [—] Live AWS deployment + MeridianLink calls (blocked: no AWS account or vendor access)
-- [—] Static GitHub Pages landing page, `llms.txt`, `CONTRIBUTING.md` (deferred; not required for a working gateway)
+- [—] Issue/PR templates and a designated triage rotation (needs repo settings or a maintainer decision)

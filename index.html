@@ -1,0 +1,337 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MeridianLink Mortgage API Gateway | Community-Supported AWS Middleware</title>
+<meta name="description" content="Community-supported, open-source AWS middleware for MeridianLink Mortgage: MISMO 3.4 XML to JSON reads, persona schema masking, async FIFO fee writes, role-scoped vendor onboarding, and field schema discovery. Deploy with one CloudFormation template.">
+<meta name="keywords" content="MeridianLink API, MeridianLink Mortgage, MISMO 3.4, mortgage middleware, AWS Lambda, CloudFormation, API gateway, field schema, open source">
+<meta name="author" content="Community contributors">
+<meta name="robots" content="index,follow,max-snippet:-1,max-image-preview:large,max-video-preview:-1">
+<meta name="theme-color" content="#07111f">
+<link rel="canonical" href="https://spuds0588.github.io/MeridianLink-Mortgage-API-Passthrough-Middleware-Gateway/">
+<link rel="alternate" type="text/plain" href="./llms.txt" title="llms.txt">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="MeridianLink Mortgage API Gateway">
+<meta property="og:locale" content="en_US">
+<meta property="og:title" content="MeridianLink Mortgage API Gateway">
+<meta property="og:description" content="Community-supported AWS middleware for MISMO-to-JSON reads, persona masking, async fee writes, and invite-scoped vendor onboarding.">
+<meta property="og:url" content="https://spuds0588.github.io/MeridianLink-Mortgage-API-Passthrough-Middleware-Gateway/">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="MeridianLink Mortgage API Gateway">
+<meta name="twitter:description" content="Community-supported, open-source AWS middleware for MeridianLink Mortgage.">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "WebSite",
+      "@id": "https://spuds0588.github.io/MeridianLink-Mortgage-API-Passthrough-Middleware-Gateway/#website",
+      "url": "https://spuds0588.github.io/MeridianLink-Mortgage-API-Passthrough-Middleware-Gateway/",
+      "name": "MeridianLink Mortgage API Gateway",
+      "description": "Community-supported, open-source AWS middleware for MeridianLink Mortgage.",
+      "inLanguage": "en"
+    },
+    {
+      "@type": "SoftwareSourceCode",
+      "@id": "https://spuds0588.github.io/MeridianLink-Mortgage-API-Passthrough-Middleware-Gateway/#software",
+      "name": "MeridianLink Mortgage API Passthrough & Middleware Gateway",
+      "description": "Stateless AWS middleware for MISMO 3.4 to JSON reads, persona schema masking, asynchronous FIFO fee writes, role-scoped onboarding, and field schema discovery.",
+      "codeRepository": "https://github.com/Spuds0588/MeridianLink-Mortgage-API-Passthrough-Middleware-Gateway",
+      "license": "https://opensource.org/license/mit",
+      "programmingLanguage": { "@type": "ComputerLanguage", "name": "JavaScript" },
+      "runtimePlatform": "Node.js 20 on AWS Lambda",
+      "applicationCategory": "DeveloperApplication",
+      "isAccessibleForFree": true
+    },
+    {
+      "@type": "FAQPage",
+      "@id": "https://spuds0588.github.io/MeridianLink-Mortgage-API-Passthrough-Middleware-Gateway/#faq",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "Does the gateway store loan data?",
+          "acceptedAnswer": { "@type": "Answer", "text": "No. It stores tenant mappings, job status with a TTL, and the in-flight fee payload in the queue message. Loan documents and borrower data stay in MeridianLink." }
+        },
+        {
+          "@type": "Question",
+          "name": "How do I report a bug or contribute?",
+          "acceptedAnswer": { "@type": "Answer", "text": "Open a GitHub issue with a minimal reproduction and sanitized logs, or a pull request with a regression test. The maintainer is happy to add contributors who want to keep improving the project." }
+        },
+        {
+          "@type": "Question",
+          "name": "Has this been verified against a live MeridianLink tenant or AWS?",
+          "acceptedAnswer": { "@type": "Answer", "text": "No. The maintainer has no MeridianLink or AWS access. The template is structurally tested and the inline Lambda bundle is executed locally, but live tenant and deployed-stack validation is a shared community responsibility." }
+        }
+      ]
+    }
+  ]
+}
+</script>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #07111f;
+    --panel: #0e1b2c;
+    --panel-2: #12233a;
+    --line: #21364f;
+    --text: #e6edf7;
+    --muted: #98a9c0;
+    --accent: #5eead4;
+    --accent-2: #93c5fd;
+    --warn: #fbbf24;
+    --radius: 12px;
+    --max: 1040px;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: radial-gradient(1200px 600px at 15% -10%, #14304d 0%, var(--bg) 55%);
+    color: var(--text);
+    font: 16px/1.65 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  a { color: var(--accent-2); }
+  a:hover { color: var(--accent); }
+  .skip { position: absolute; left: -999px; }
+  .skip:focus { left: 16px; top: 16px; padding: 8px 12px; background: var(--panel); border-radius: 8px; }
+  .wrap { width: 100%; max-width: var(--max); margin: 0 auto; padding: 0 22px; }
+  header.site {
+    position: sticky; top: 0; z-index: 10;
+    backdrop-filter: blur(8px);
+    background: rgba(7, 17, 31, 0.82);
+    border-bottom: 1px solid var(--line);
+  }
+  header.site .wrap { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 62px; flex-wrap: wrap; }
+  .brand { font-weight: 700; letter-spacing: -0.01em; text-decoration: none; color: var(--text); }
+  .brand span { color: var(--accent); }
+  nav.links { display: flex; gap: 16px; flex-wrap: wrap; font-size: 14px; }
+  nav.links a { text-decoration: none; color: var(--muted); }
+  nav.links a:hover { color: var(--text); }
+  main { padding: 48px 0 24px; }
+  .kicker { margin: 0 0 12px; color: var(--accent); font-size: 13px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; }
+  h1 { margin: 0 0 16px; font-size: clamp(32px, 5vw, 50px); line-height: 1.1; letter-spacing: -0.03em; }
+  h2 { margin: 0 0 10px; font-size: clamp(22px, 3vw, 28px); letter-spacing: -0.02em; }
+  h3 { margin: 0 0 6px; font-size: 16px; }
+  p { margin: 0 0 14px; }
+  .lede { max-width: 720px; color: var(--muted); font-size: 18px; }
+  .muted { color: var(--muted); }
+  section { padding: 34px 0; border-top: 1px solid var(--line); }
+  section:first-of-type { border-top: 0; padding-top: 8px; }
+  .actions { display: flex; flex-wrap: wrap; gap: 10px; margin: 24px 0 22px; }
+  .button {
+    display: inline-block; padding: 10px 16px; border-radius: 9px; text-decoration: none;
+    border: 1px solid var(--line); background: var(--panel-2); color: var(--text); font-weight: 600; font-size: 14px;
+  }
+  .button:hover { border-color: var(--accent); color: var(--text); }
+  .button.primary { background: linear-gradient(135deg, #0f766e, #155e75); border-color: #0f766e; }
+  .button.urgent { background: #7c2d12; border-color: #9a3412; }
+  .quickfacts { display: flex; flex-wrap: wrap; gap: 8px 18px; margin: 0; padding: 0; list-style: none; color: var(--muted); font-size: 14px; }
+  .quickfacts li::before { content: "▸ "; color: var(--accent); }
+  .community {
+    margin-top: 32px; padding: 24px; border: 1px solid #2f6b5f; border-radius: var(--radius);
+    background: linear-gradient(135deg, rgba(94, 234, 212, 0.08), rgba(147, 197, 253, 0.05));
+  }
+  .community h2 { margin-bottom: 8px; }
+  .community strong { color: var(--accent); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 14px; margin-top: 18px; }
+  .card { padding: 18px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); }
+  .card p { margin: 0; color: var(--muted); font-size: 14px; }
+  .card a { font-weight: 600; }
+  .stack { margin-top: 14px; padding-left: 20px; color: var(--muted); }
+  .stack li { margin: 6px 0; }
+  pre {
+    margin: 14px 0; padding: 16px; overflow-x: auto; border: 1px solid var(--line);
+    border-radius: var(--radius); background: #050d18; color: #d7e3f4; font-size: 13px; line-height: 1.55;
+  }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  p code, li code, td code { background: #050d18; padding: 2px 6px; border-radius: 5px; font-size: 13px; }
+  .table-wrap { overflow-x: auto; margin-top: 14px; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.06em; }
+  details { border: 1px solid var(--line); border-radius: 10px; background: var(--panel); padding: 14px 16px; margin: 10px 0; }
+  summary { cursor: pointer; font-weight: 600; }
+  details p { margin: 10px 0 0; color: var(--muted); }
+  .note { border-left: 3px solid var(--warn); padding: 10px 14px; background: rgba(251, 191, 36, 0.07); border-radius: 0 8px 8px 0; color: #f3e3b6; font-size: 14px; }
+  footer.site { border-top: 1px solid var(--line); padding: 28px 0 40px; color: var(--muted); font-size: 14px; }
+  footer.site .wrap { display: flex; flex-wrap: wrap; gap: 12px 22px; justify-content: space-between; }
+  footer.site nav { display: flex; flex-wrap: wrap; gap: 14px; }
+  footer.site a { text-decoration: none; }
+  @media (max-width: 640px) {
+    main { padding-top: 28px; }
+    section { padding: 26px 0; }
+    .community { padding: 18px; }
+  }
+</style>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="site">
+  <div class="wrap">
+    <a class="brand" href="./">MeridianLink <span>Gateway</span></a>
+    <nav class="links" aria-label="Primary">
+      <a href="#community">Community</a>
+      <a href="#deploy">Deploy</a>
+      <a href="#api">API</a>
+      <a href="https://github.com/Spuds0588/MeridianLink-Mortgage-API-Passthrough-Middleware-Gateway">GitHub</a>
+      <a href="https://github.com/Spuds0588/MeridianLink-Mortgage-API-Passthrough-Middleware-Gateway/issues/new">Report a bug</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+  <div class="wrap">
+
+    <section class="hero" aria-labelledby="hero-title">
+      <p class="kicker">Community-supported · MIT · AWS Lambda</p>
+      <h1 id="hero-title">A small, stable API in front of MeridianLink Mortgage.</h1>
+      <p class="lede">An open-source, stateless middleware template that turns MISMO 3.4 XML into clean JSON, masks borrower NPI per persona, queues fee writes through a FIFO pipeline, and onboards title, broker, and appraisal partners with role invite links. It deploys into the lender's AWS account and never stores loan documents.</p>
+      <div class="actions">
+        <a class="button urgent" href="https://github.com/Spuds0588/MeridianLink-Mortgage-API-Passthrough-Middleware-Gateway/issues/new">Report a bug</a>
+        <a class="button primary" href="#deploy">Deploy the template</a>
+        <a class="button" href="https://github.com/Spuds0588/MeridianLink-Mortgage-API-Passthrough-Middleware-Gateway">Read the source</a>
+      </div>
+      <ul class="quickfacts">
+        <li>One CloudFormation file</li>
+        <li>Role-scoped API keys</li>
+        <li>No loan payload storage</li>
+        <li>Static egress IP</li>
+      </ul>
+    </section>
+
+    <section class="community" id="community" aria-labelledby="community-title">
+      <h2 id="community-title">This project improves when deployments report back</h2>
+      <p>This is an independent, community-supported template, not a vendor product. The maintainer has <strong>no MeridianLink access and no AWS account for this project</strong>, so real-world validation only happens when someone who can deploy tells the rest of us what they saw. Bugs, MISMO shape corrections, and fixes are a shared responsibility.</p>
+      <p>File them as GitHub issues or pull requests with sanitized evidence (redacted field shapes, deployment or log excerpts), never secrets or PII. Privately-patched forks are discouraged, and no one should claim live MeridianLink or AWS verification that did not happen.</p>
+      <div class="grid">
+        <article class="card">
+          <h3>Found a bug?</h3>
+          <p>Open an issue with a minimal reproduction, the commit you tested, and sanitized logs. <a href="https://github.com/Spuds0588/MeridianLink-Mortgage-API-Passthrough-Middleware-Gateway/issues/new">Report it</a>.</p>
+        </article>
+        <article class="card">
+          <h3>Fixed something?</h3>
+          <p>Submit a pull request with a regression test and the docs updated. <a href="https://github.com/Spuds0588/MeridianLink-Mortgage-API-Passthrough-Middleware-Gateway/pulls">Open a PR</a>.</p>
+        </article>
+        <article class="card">
+          <h3>Validated a shape?</h3>
+          <p>Contribute a sanitized MISMO fixture or fake-response case so the suite covers the real payload, not just ours.</p>
+        </article>
+        <article class="card">
+          <h3>Want to keep going?</h3>
+          <p>The maintainer is happy to add contributors. Say so on your issue or pull request and you will be added to the project.</p>
+        </article>
+      </div>
+      <p style="margin-top:16px">Read the rules in <a href="https://github.com/Spuds0588/MeridianLink-Mortgage-API-Passthrough-Middleware-Gateway/blob/main/CONTRIBUTING.md">CONTRIBUTING.md</a>, the agent operating manual in <a href="https://github.com/Spuds0588/MeridianLink-Mortgage-API-Passthrough-Middleware-Gateway/blob/main/AGENTS.md">AGENTS.md</a>, and the machine-readable context in <a href="./llms.txt">llms.txt</a>. Never include API keys, invite codes, passwords, loan data, or borrower PII in an issue, PR, screenshot, or log.</p>
+    </section>
+
+    <section aria-labelledby="features-title">
+      <h2 id="features-title">What it does</h2>
+      <div class="grid">
+        <article class="card">
+          <h3>MISMO to JSON</h3>
+          <p>Reads return <code>loanId</code>, <code>milestone</code>, <code>property</code>, <code>terms</code>, <code>fees</code>, and persona-permitted extras. No vendor-side XML parsing.</p>
+        </article>
+        <article class="card">
+          <h3>Persona masking</h3>
+          <p>Deny-by-default allowlists per role. SSN, credit score, and income never reach a title or appraisal key. Unknown personas fail closed.</p>
+        </article>
+        <article class="card">
+          <h3>Async fee writes</h3>
+          <p><code>PATCH /v1/loans/&#123;id&#125;/fees</code> returns <code>202</code> with a job ID, retries record locks with backoff, and dead-letters after five attempts.</p>
+        </article>
+        <article class="card">
+          <h3>Invite onboarding</h3>
+          <p>The lender shares a title, broker, or appraisal link. The gateway locks the key to that persona server-side; the client cannot choose it.</p>
+        </article>
+        <article class="card">
+          <h3>Field discovery</h3>
+          <p><code>GET /v1/fields?ids=...</code> proxies MeridianLink definitions and caches them per persona for five minutes.</p>
+        </article>
+        <article class="card">
+          <h3>One-file deploy</h3>
+          <p>A single CloudFormation template under the direct-upload limit with the Lambda bundle inlined. No S3 bucket, no zip, no build step in AWS.</p>
+        </article>
+      </div>
+    </section>
+
+    <section id="deploy" aria-labelledby="deploy-title">
+      <h2 id="deploy-title">Deploy in one line</h2>
+      <p>Run this in AWS CloudShell. It verifies your session, asks for the MeridianLink base URL, username, and password, generates three role invite codes, and deploys the stack with a VPC, NAT gateway, and static egress IP.</p>
+      <pre><code>bash &lt;(curl -sSL https://raw.githubusercontent.com/Spuds0588/MeridianLink-Mortgage-API-Passthrough-Middleware-Gateway/main/deploy.sh)</code></pre>
+      <p class="muted">It prints the gateway URL, portal URL, health and fields URLs, the static egress IP, and one invite link per role. Share each link only with that role's partners; invite codes are bearer secrets.</p>
+      <p class="note">Ask MeridianLink support to allowlist the printed <code>StaticEgressIp</code> before expecting live reads or writes to succeed.</p>
+    </section>
+
+    <section id="api" aria-labelledby="api-title">
+      <h2 id="api-title">API at a glance</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Method</th><th>Path</th><th>Purpose</th></tr>
+          </thead>
+          <tbody>
+            <tr><td><code>GET</code></td><td><code>/health</code></td><td>Unauthenticated health check</td></tr>
+            <tr><td><code>GET</code></td><td><code>/portal?role=title&amp;code=...</code></td><td>Persona-locked invite page and field cheat sheet</td></tr>
+            <tr><td><code>POST</code></td><td><code>/portal</code></td><td>Provision a key with <code>role</code>, <code>code</code>, <code>tenantName</code>, <code>email</code></td></tr>
+            <tr><td><code>GET</code></td><td><code>/v1/fields?ids=11,646</code></td><td>Field definitions from MeridianLink</td></tr>
+            <tr><td><code>GET</code></td><td><code>/v1/loans/&#123;id&#125;</code></td><td>Masked MISMO-to-JSON read</td></tr>
+            <tr><td><code>PATCH</code></td><td><code>/v1/loans/&#123;id&#125;/fees</code></td><td>Queue fee updates, return <code>202</code> and a job ID</td></tr>
+            <tr><td><code>GET</code></td><td><code>/v1/jobs/&#123;id&#125;</code></td><td>Job status, owner only</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="muted">All <code>/v1/*</code> routes require <code>x-api-key</code>. The portal and health check are the only unauthenticated HTTP routes. Job states: <code>PENDING</code>, <code>RETRYING</code>, <code>COMPLETED</code>, <code>FAILED</code>.</p>
+    </section>
+
+    <section aria-labelledby="local-title">
+      <h2 id="local-title">Verify locally before you deploy</h2>
+      <pre><code>npm run dev       # fake MeridianLink + local gateway on :3000
+npm run verify    # template sync check + full test suite
+npm run build     # regenerate dist/gateway.js and template.yaml</code></pre>
+      <p class="muted">No dependencies to install. The local stack runs the real handler against a fake MeridianLink and an in-memory AWS stand-in, including the invite portal, masking, schema cache, and lock-retry behavior. Mock loans: <code>ML-998822</code>, <code>ML-LOCKED-1</code>, and <code>ML-404</code>.</p>
+    </section>
+
+    <section id="faq" aria-labelledby="faq-title">
+      <h2 id="faq-title">Common questions</h2>
+      <details>
+        <summary>Does the gateway store loan data?</summary>
+        <p>No. It stores tenant mappings, job status with a TTL, and the in-flight fee payload in the queue message. Loan documents and borrower data stay in MeridianLink, which remains the system of record.</p>
+      </details>
+      <details>
+        <summary>Can I try it without MeridianLink or AWS access?</summary>
+        <p>Yes. <code>npm run dev</code> and <code>npm test</code> run the real handler against a local fake, with no accounts required. What that cannot prove is live authentication, real MISMO shapes, AWS resource behavior, or the egress allowlist.</p>
+      </details>
+      <details>
+        <summary>How do I report a bug or become a contributor?</summary>
+        <p>Open a <a href="https://github.com/Spuds0588/MeridianLink-Mortgage-API-Passthrough-Middleware-Gateway/issues/new">GitHub issue</a> with a minimal reproduction, sanitized evidence, and the commit you tested. Submit fixes as <a href="https://github.com/Spuds0588/MeridianLink-Mortgage-API-Passthrough-Middleware-Gateway/pulls">pull requests</a> with a regression test and updated docs. Say so if you want to keep contributing: the maintainer is happy to add contributors. Never include client secrets, API keys, invite codes, loan data, or PII.</p>
+      </details>
+      <details>
+        <summary>What has not been verified?</summary>
+        <p>A real CloudFormation deployment, API Gateway key creation, DynamoDB and SQS behavior, live MeridianLink authentication, loan reads and writes, the static egress allowlist, and real MISMO response shapes. The template is structurally tested and the inline Lambda bundle is executed locally; that is different from a live tenant.</p>
+      </details>
+      <details>
+        <summary>Why is the invite model role-scoped instead of open?</summary>
+        <p>An open portal would let anyone mint a key into a lender's MeridianLink. Each invite code maps server-side to one persona, so a title partner cannot request broker scope, and the maintainer can rotate a role's code through stack parameters.</p>
+      </details>
+    </section>
+
+  </div>
+</main>
+
+<footer class="site">
+  <div class="wrap">
+    <p style="margin:0">MIT licensed. Independent and community-supported; not affiliated with MeridianLink.</p>
+    <nav aria-label="Footer">
+      <a href="https://github.com/Spuds0588/MeridianLink-Mortgage-API-Passthrough-Middleware-Gateway/blob/main/README.md">README</a>
+      <a href="https://github.com/Spuds0588/MeridianLink-Mortgage-API-Passthrough-Middleware-Gateway/blob/main/CONTRIBUTING.md">Contributing</a>
+      <a href="https://github.com/Spuds0588/MeridianLink-Mortgage-API-Passthrough-Middleware-Gateway/blob/main/AGENTS.md">Agent guide</a>
+      <a href="./llms.txt">llms.txt</a>
+      <a href="https://github.com/Spuds0588/MeridianLink-Mortgage-API-Passthrough-Middleware-Gateway/issues">Issues</a>
+      <a href="https://github.com/Spuds0588/MeridianLink-Mortgage-API-Passthrough-Middleware-Gateway/pulls">Pull requests</a>
+    </nav>
+  </div>
+</footer>
+</body>
+</html>

@@ -4,6 +4,43 @@ Append-only. Newest entries at the top. Never rewrite past entries; add a correc
 
 ---
 
+## 2026-11-06 — Aggressive community maintenance
+
+**Requirement.** The sister project asks deployers to report back; this repository did not. The maintainer
+does not have MeridianLink or AWS access for this project, so real usage is the only source of truth.
+Community contribution is now treated as a product requirement rather than a nicety.
+
+**Changed**
+
+- `AGENTS.md` §0 "Community maintenance is part of the job": file an issue for every found bug, upstream
+  every fix with a regression test, state explicitly when a fix cannot be contributed, recruit contributors,
+  never claim unperformed verification, never leak secrets or loan data, keep all surfaces in sync.
+- `llms.txt` (new): canonical links, API and deploy summary, community contract, numbered instructions for
+  coding agents, and an honest verification/limitations section.
+- `CONTRIBUTING.md` (new): ways to help, issue checklist and report template, pull-request workflow with
+  `npm run build`/`npm run verify`, optional `cfn-lint`, real-environment testing steps, redaction rules,
+  and an explicit "maintainer will add contributors" invitation.
+- `index.html` (new): GitHub Pages landing page with a community section above the features, direct
+  `issues/new` and `pulls` links, contributor invitation, FAQ (including what is unverified), canonical
+  metadata, OG/Twitter tags, and JSON-LD. Self-contained: inline CSS, no external scripts or fonts.
+- `README.md`: a community section at the top pointing at issues, PRs, `CONTRIBUTING.md`, `AGENTS.md`,
+  `llms.txt`, and `index.html`.
+- `test/static.test.js`: guards the canonical/JSON-LD metadata, the absence of external assets, the
+  issue/PR/contributor links, the `AGENTS.md` maintenance and hygiene principles, and the `llms.txt`
+  contract. The direction cannot silently rot.
+
+**Decisions**
+
+- No false verification claims anywhere: the maintainer has no MeridianLink or AWS access, and every
+  surface says so. The FAQ answers "what has not been verified" directly.
+- Privately patched forks are discouraged; the smallest upstream fix plus a regression test is the
+  expected path.
+- GitHub Pages is served from `main` root when enabled in repository settings; there is no separate build.
+- Issue/PR templates and a triage rotation are deferred in `todo.md`; they need repository settings or a
+  maintainer decision, not code.
+
+---
+
 ## 2026-11-06 — Sister-project parity (Encompass gateway)
 
 Reviewed `https://github.com/Spuds0588/Encompass-API-Passhrough-Middleware-Gateway-` (15 commits) and

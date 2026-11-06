@@ -2,6 +2,33 @@
 
 For AI agents and developers working in this repository. Read this before touching code.
 
+## 0. Community maintenance is part of the job
+
+This is **shared infrastructure, not a supported vendor product**. The maintainer has **no MeridianLink
+access and no AWS account for this project**, so real-world validation only happens when a deployment
+reports back. Improving the product from real usage is a deliverable, not an optional nicety.
+
+- **Every bug you find, file it.** Open a GitHub issue with a minimal reproduction, the commit you tested,
+  and sanitized evidence. Do not silently work around a gateway defect in a lender's fork.
+- **Every fix you make, upstream it.** Open a pull request with a regression test and updated docs. A fix
+  that exists only in a private deployment is a fix nobody else gets.
+- **When you cannot contribute, say so.** If a change is blocked (no write access, customer constraints),
+  open the issue with what you learned and state explicitly that the patch is not contributed.
+- **When you deploy, report it.** A sanitized note that a real MeridianLink tenant or AWS stack worked —
+  or failed — is more valuable than a speculative patch. Add it to the relevant issue or a new one.
+- **Actively recruit.** Developers and coding agents who validate behavior, correct a MISMO shape, or open
+  a good review are maintainers-in-waiting. Say so in the issue or PR, and the maintainer will add
+  contributors who want to keep going.
+- **Never claim verification that did not happen.** Local fakes, CI, and template guards are not a live
+  tenant or a deployed stack. State exactly what ran.
+- **Never leak.** No API keys, invite codes, passwords, secrets, loan data, borrower PII, or full upstream
+  payloads in issues, PRs, tests, fixtures, screenshots, logs, or generated pages. Redact and rotate.
+- **Keep the surfaces in sync.** Behavior, API, deployment, or security changes update `README.md`,
+  `CONTRIBUTING.md`, `llms.txt`, `index.html`, `todo.md`, and this file in the same change.
+
+When you finish a task, ask: *did this produce a test, an issue, or a PR that another deployment can
+use?* If not, why not.
+
 ## 1. Operating Philosophy
 
 - **YAGNI first.** Build only what the task or the design doc requires. No speculative endpoints, flags, config knobs, or "just in case" abstractions. If a feature is not in `todo.md`, do not write it.
@@ -100,4 +127,6 @@ npm run verify    # build --check + tests (run before committing)
 
 - `todo.md` is the single source of truth for current work; `history.md` is append-only. Tick items; never delete them. Supersede a decision with a new dated entry rather than rewriting the old one.
 - `npm run verify` must pass before every commit.
-- Behavior or API changes update `README.md`, this file, `todo.md`, and `history.md` in the same change.
+- Behavior or API changes update `README.md`, `CONTRIBUTING.md`, `llms.txt`, `index.html`, `todo.md`, and this file in the same change.
+- Every non-trivial fix ships with a regression test; every uncertainty becomes a GitHub issue rather than a silent assumption.
+- Prefer a small upstream-to-`main` change over a larger local fork. Keep commit messages specific about what was and was not verified.

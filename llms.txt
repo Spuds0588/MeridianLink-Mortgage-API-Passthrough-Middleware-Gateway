@@ -1,0 +1,82 @@
+# MeridianLink Mortgage API Passthrough & Middleware Gateway
+
+> A community-supported, open-source AWS middleware template for MeridianLink Mortgage: MISMO 3.4 XML to JSON reads, persona schema masking, asynchronous FIFO fee writes, role-scoped vendor onboarding, field schema discovery, and a static egress IP for the vendor firewall allowlist. It stores no loan documents. It is not affiliated with or endorsed by MeridianLink.
+
+The maintainer cannot access a MeridianLink tenant or a lender AWS account, so real-world validation is a shared community responsibility. Reproducible bugs, sanitized field shapes, and upstream fixes belong in GitHub issues and pull requests. This project only improves when deployments report back.
+
+## Canonical resources
+
+- [Project landing page](https://spuds0588.github.io/MeridianLink-Mortgage-API-Passthrough-Middleware-Gateway/): overview, API summary, FAQ, and community expectations.
+- [README](https://github.com/Spuds0588/MeridianLink-Mortgage-API-Passthrough-Middleware-Gateway/blob/main/README.md): deployment, API, security, and known limitations.
+- [Agent directions](https://github.com/Spuds0588/MeridianLink-Mortgage-API-Passthrough-Middleware-Gateway/blob/main/AGENTS.md): operating manual for coding agents and maintainers.
+- [Contributing guide](https://github.com/Spuds0588/MeridianLink-Mortgage-API-Passthrough-Middleware-Gateway/blob/main/CONTRIBUTING.md): bug reports, pull requests, tests, and redaction rules.
+- [Source code](https://github.com/Spuds0588/MeridianLink-Mortgage-API-Passthrough-Middleware-Gateway): handler, template, tests, installer, and local fakes.
+- [Open issues](https://github.com/Spuds0588/MeridianLink-Mortgage-API-Passthrough-Middleware-Gateway/issues): check for an existing report before opening a new one.
+- [Pull requests](https://github.com/Spuds0588/MeridianLink-Mortgage-API-Passthrough-Middleware-Gateway/pulls): fixes, tests, docs, and sanitized MISMO shape fixtures are welcome.
+- [License](https://github.com/Spuds0588/MeridianLink-Mortgage-API-Passthrough-Middleware-Gateway/blob/main/LICENSE): MIT.
+
+## What it does
+
+- Deploys one self-contained AWS Lambda behind API Gateway, with DynamoDB, SQS FIFO plus DLQ, Secrets Manager, and one CloudFormation template under the 51,200-byte direct-upload limit.
+- Converts MISMO 3.4 XML loan documents into a small JSON contract: `loanId`, `milestone`, `property`, `terms`, `fees`, plus persona-permitted extras.
+- Masks responses with deny-by-default persona allowlists. Unknown personas fail closed. Borrower SSN, credit score, and income never reach a title or appraisal key.
+- Queues fee writes asynchronously through SQS FIFO, grouped by loan, and retries MeridianLink record locks (`423`), throttling (`429`), and `5xx` responses up to five attempts before dead-lettering.
+- Provides role-scoped invite onboarding for title/settlement, TPO/broker, and AMC/appraisal partners. The server chooses the persona from the role; clients cannot choose it or widen it.
+- Proxies `GET /v1/fields?ids=...` to MeridianLink and caches definitions per persona for five minutes.
+- Provisions a VPC, NAT gateway, and Elastic IP so MeridianLink can allowlist one static egress address.
+- Never persists loan payloads. It stores tenant mappings, job status with a TTL, and in-flight fee payloads in the queue message only.
+
+## API surface
+
+- `GET /health`
+- `GET /portal` and `GET /portal?role=title&code=...`
+- `POST /portal` with `role`, `code`, `tenantName`, and `email`
+- `GET /v1/fields?ids=11,646,CX.TITLE.STATUS`
+- `GET /v1/loans/{loanId}`
+- `PATCH /v1/loans/{loanId}/fees` with `{ "fees": [{ "feeType": "...", "amount": 1350 }] }`
+- `GET /v1/jobs/{jobId}`
+
+All `/v1/*` routes require `x-api-key`. The portal and health check are the only unauthenticated HTTP routes.
+
+## Deploy and verify locally
+
+- One-line installer: `bash <(curl -sSL https://raw.githubusercontent.com/Spuds0588/MeridianLink-Mortgage-API-Passthrough-Middleware-Gateway/main/deploy.sh)`
+- Local gateway with a fake MeridianLink: `npm run dev`
+- Tests and template sync: `npm run verify`
+- Regenerate the committed CloudFormation artifact after `src/` or `infra/` changes: `npm run build`
+- No npm runtime dependencies are used. CI covers Node 20 and Node 24; the Lambda runtime is Node.js 20.
+- `test/bundle.test.js` extracts the inline Lambda code from `template.yaml` and executes it. That proves the deployable artifact, not AWS resources.
+
+## Community contract
+
+- This project is shared infrastructure, not a paid supported product. If you deploy it, you are part of the testing community.
+- **Found a bug?** Open a GitHub issue with a minimal reproduction, the commit you tested, and sanitized logs.
+- **Fixed something?** Open a pull request with a regression test and the docs updated.
+- **Validated a MISMO shape?** Contribute a sanitized fixture or fake-response case so the suite covers it.
+- **Deployed successfully?** Report the sanitized result on the relevant issue. That evidence is more valuable than a speculative patch.
+- **Want to keep going?** The maintainer is happy to add contributors. Say so on your issue or pull request and you will be added.
+- Privately-patched forks are discouraged. If a lender deployment needed a change, upstream the smallest fix so the next deployment benefits.
+- If a fix cannot be contributed, state that explicitly and explain why.
+- Never include API keys, invite codes, passwords, client secrets, loan data, borrower PII, or full upstream payloads in an issue, pull request, screenshot, log, test, or generated page.
+- Do not claim live MeridianLink or AWS verification that did not happen.
+- Keep `README.md`, `AGENTS.md`, `CONTRIBUTING.md`, this file, and `index.html` in sync when behavior changes.
+
+## Instructions for coding agents
+
+1. Read `AGENTS.md` and `CONTRIBUTING.md` before changing code.
+2. Do not invent MeridianLink endpoints, MISMO tag names, or MISMO shapes. Extend `mock/meridian.js` and `fixtures/loan.xml` for tests and ask for a sanitized real shape in an issue if one is missing.
+3. Reproduce the bug with the smallest failing test first, then change the handler. Never weaken an assertion to make CI pass.
+4. Run `npm run verify` before proposing a change. If `src/` or `infra/template.yaml` changed, run `npm run build` first so `template.yaml` stays in sync.
+5. If behavior, API, deployment, or security changes, update `README.md`, `AGENTS.md`, `CONTRIBUTING.md`, `index.html`, and this file in the same change, and tick `todo.md` while appending to `history.md`.
+6. Open a GitHub issue for anything you cannot verify locally (a real tenant, a real stack, a MISMO shape). Submit the fix as a pull request when you can; if you cannot, say so explicitly.
+7. Do not claim live MeridianLink or AWS verification unless it actually occurred. Local fakes, CI, and template guards do not prove a real tenant works.
+8. Redact secrets and loan data. Rotate any credential that was exposed before posting a redacted report.
+9. Prefer the smallest upstream change. Do not add dependencies, speculative endpoints, or configuration knobs to work around a reportable defect.
+10. Leave the dev environment clean: stop servers, remove `dist/` and scratch files, and confirm no processes survive. This machine has limited memory.
+
+## Verification status and limitations
+
+- Verified locally and in CI: routing, invite validation and persona locking, masking and NPI pruning, field schema lookup and cache, reads, async writes with retry classification, job ownership, template sync and size, and execution of the exact inline Lambda bundle.
+- Not verified by the maintainers: a real CloudFormation deployment, API Gateway key creation, DynamoDB/SQS behavior, live MeridianLink authentication, loan reads and writes, the static egress IP allowlist, and real MISMO response shapes for any tenant.
+- Known limitations: one shared usage plan, global per-role invite codes rather than single-use vendor invites, no revocation UI, no CORS, no admin dashboard, and a curated cheat sheet that only covers common JSON paths.
+- The landing page is served from GitHub Pages. The API is deployed separately into each lender's AWS account.
