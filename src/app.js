@@ -3,6 +3,7 @@ const { randomUUID } = require("node:crypto");
 const { log } = require("./log");
 const { mask } = require("./mask");
 const { parseLoan, feesToXml, conditionsToXml } = require("./mismo");
+const { parseDocumentList, parseDocumentContent } = require("./edocs");
 const { roleFor, safeEqual } = require("./roles");
 const { renderPortal } = require("./portal");
 
@@ -11,6 +12,9 @@ const FIELD_ID = /^[A-Za-z0-9._-]+$/;
 const SCHEMA_TTL_MS = 5 * 60_000;
 const SCHEMA_CACHE_MAX = 200;
 const JOB_TTL_SECONDS = 30 * 24 * 60 * 60;
+// SQS caps a message at 256 KiB; base64 plus JSON overhead leaves room for a
+// ~180 KB PDF. Larger files need an S3 staging hop, not a silent truncation.
+const MAX_DOCUMENT_BYTES = 180_000;
 
 const json = (statusCode, body, headers = {}) => ({
   statusCode,
@@ -69,6 +73,16 @@ const validConditions = (conditions) =>
       condition.status.trim().length > 0 &&
       condition.status.length <= 50
   );
+
+const parsePdf = (content) => {
+  if (typeof content !== "string" || !content.trim()) return { error: [400, "contentBase64 is required"] };
+  const clean = content.replace(/\s+/g, "");
+  if (clean.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(clean)) return { error: [400, "contentBase64 must be valid base64"] };
+  const bytes = Buffer.from(clean, "base64");
+  if (!bytes.subarray(0, 5).equals(Buffer.from("%PDF-"))) return { error: [415, "Only PDF content is supported"] };
+  if (bytes.length > MAX_DOCUMENT_BYTES) return { error: [413, `Document exceeds ${MAX_DOCUMENT_BYTES} bytes (SQS message limit)`, { maxBytes: MAX_DOCUMENT_BYTES }] };
+  return { content: clean };
+};
 
 function createApp({ store, meridian, env = process.env, now = () => Date.now() }) {
   if (!store) throw new Error("createApp requires a store");
@@ -153,9 +167,12 @@ function createApp({ store, meridian, env = process.env, now = () => Date.now() 
   async function enqueueWrite(event, apiKeyId, loanId, kind = "fees") {
     const tenant = await tenantFor(apiKeyId);
     if (!tenant) return error(403, "Unauthorized tenant mapping");
-    if (kind === "conditions" ? tenant.persona !== "TPO_BROKER" : !["TITLE_VENDOR", "TPO_BROKER"].includes(tenant.persona)) {
-      return error(403, `Persona cannot ${kind === "conditions" ? "submit conditions" : "write fees"}`);
-    }
+    const allowed =
+      kind === "fees"
+        ? ["TITLE_VENDOR", "TPO_BROKER"].includes(tenant.persona)
+        : tenant.persona === "TPO_BROKER";
+    const operation = { fees: "write fees", conditions: "submit conditions", documents: "upload documents" }[kind];
+    if (!allowed) return error(403, `Persona cannot ${operation}`);
 
     let payload;
     try {
@@ -163,11 +180,25 @@ function createApp({ store, meridian, env = process.env, now = () => Date.now() 
     } catch {
       return error(400, "Invalid JSON body");
     }
-    const same = kind === "conditions"
-      ? validConditions(payload?.conditions) && conditionsToXml(loanId, payload.conditions)
-      : validFees(payload?.fees) && feesToXml(loanId, payload.fees);
-    if (!same) {
-      return error(400, `Body must contain a non-empty ${kind} array (max 100)`);
+
+    let message;
+    if (kind === "documents") {
+      if (typeof payload?.documentType !== "string" || !payload.documentType.trim() || payload.documentType.length > 100) {
+        return error(400, "documentType is required (max 100 chars)");
+      }
+      if (payload.notes !== undefined && (typeof payload.notes !== "string" || payload.notes.length > 500)) {
+        return error(400, "notes must be a string (max 500 chars)");
+      }
+      const pdf = parsePdf(payload?.contentBase64);
+      if (pdf.error) return error(pdf.error[0], pdf.error[1], pdf.error[2]);
+      message = { doc: { documentType: payload.documentType.trim(), notes: String(payload.notes || "").trim(), contentBase64: pdf.content } };
+    } else {
+      const mismo =
+        kind === "conditions"
+          ? validConditions(payload?.conditions) && conditionsToXml(loanId, payload.conditions)
+          : validFees(payload?.fees) && feesToXml(loanId, payload.fees);
+      if (!mismo) return error(400, `Body must contain a non-empty ${kind} array (max 100)`);
+      message = { mismo };
     }
 
     const createdAt = new Date(now()).toISOString();
@@ -187,7 +218,7 @@ function createApp({ store, meridian, env = process.env, now = () => Date.now() 
     await store.putJob(job);
 
     try {
-      await store.enqueueWrite({ jobId: job.jobId, loanId, mismo: same });
+      await store.enqueueWrite({ jobId: job.jobId, loanId, ...message });
     } catch (err) {
       await store.putJob({ ...job, status: "FAILED", error: "Queue unavailable", updatedAt: new Date(now()).toISOString() });
       log("ERROR", "WRITE_ENQUEUE_FAILED", { jobId: job.jobId, loanId, message: err.message });
@@ -196,6 +227,35 @@ function createApp({ store, meridian, env = process.env, now = () => Date.now() 
 
     log("INFO", "WRITE_ENQUEUED", { jobId: job.jobId, loanId, tenantName: tenant.tenantName, kind });
     return json(202, { status: "ACCEPTED", jobId: job.jobId, loanId, statusUrl: `/v1/jobs/${job.jobId}` });
+  }
+
+  async function readDocuments(apiKeyId, loanId, documentId) {
+    const tenant = await tenantFor(apiKeyId);
+    if (!tenant) return error(403, "Unauthorized tenant mapping");
+    if (tenant.persona !== "TPO_BROKER") return error(403, "Persona cannot read documents");
+
+    let upstream;
+    try {
+      upstream = documentId ? await meridian.downloadDocument(documentId) : await meridian.listDocuments(loanId);
+    } catch (err) {
+      log("ERROR", "MERIDIANLINK_DOCUMENT_FAILED", { loanId, message: err.message });
+      return error(err.name === "TimeoutError" ? 504 : 502, "MeridianLink document request failed");
+    }
+
+    log("INFO", "MERIDIANLINK_DOCUMENT_READ", { loanId, status: upstream.status, single: Boolean(documentId) });
+    if (upstream.status === 423) return error(423, "Loan is locked by MeridianLink", { code: "FILE_LOCKED" });
+    if (upstream.status === 404) return error(404, "Loan or document not found");
+    if (upstream.status === 429) return error(429, "MeridianLink rate limit reached");
+    if (upstream.status === 401 || upstream.status === 403) return error(502, "MeridianLink rejected gateway credentials");
+    if (upstream.status >= 500) return error(502, "MeridianLink unavailable");
+    if (upstream.status >= 300) return error(400, "MeridianLink rejected the request", { upstreamStatus: upstream.status });
+
+    if (documentId) {
+      const content = parseDocumentContent(upstream.body);
+      if (!content) return error(502, "MeridianLink returned no document content");
+      return json(200, { documentId, contentType: "application/pdf", contentBase64: content });
+    }
+    return json(200, { loanId, ...parseDocumentList(upstream.body) }, { "Cache-Control": "private, max-age=15" });
   }
 
   async function jobStatus(apiKeyId, jobId) {
@@ -295,10 +355,19 @@ function createApp({ store, meridian, env = process.env, now = () => Date.now() 
         if (method !== "POST") return error(405, "Method not allowed");
         return await enqueueWrite(event, apiKeyId, decode(match[1]), "conditions");
       }
+      if ((match = /^\/v1\/loans\/([^/]+)\/documents$/.exec(path))) {
+        if (method === "POST") return await enqueueWrite(event, apiKeyId, decode(match[1]), "documents");
+        if (method === "GET") return await readDocuments(apiKeyId, decode(match[1]));
+        return error(405, "Method not allowed");
+      }
+      if ((match = /^\/v1\/loans\/([^/]+)\/documents\/([^/]+)$/.exec(path))) {
+        if (method !== "GET") return error(405, "Method not allowed");
+        return await readDocuments(apiKeyId, decode(match[1]), decode(match[2]));
+      }
       if ((match = /^\/v1\/loans\/([^/]+)$/.exec(path))) {
         const loanId = decode(match[1]);
         if (method === "GET") return await readLoan(event, apiKeyId, loanId);
-        if (method === "PATCH") return error(501, "Only fee writes are supported; 1003, document, and condition writes are not implemented");
+        if (method === "PATCH") return error(501, "Only fee, condition, and document writes are supported; 1003 loan-field writes are not implemented");
         return error(405, "Method not allowed");
       }
       if ((match = /^\/v1\/jobs\/([^/]+)$/.exec(path))) {

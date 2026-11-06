@@ -74,8 +74,11 @@ curl -s "$GATEWAY_URL/v1/jobs/$JOB_ID" -H "x-api-key: $KEY"
   persona-permitted extras. No vendor-side XML parsing.
 - **Persona schema masking** — deny-by-default allowlists per role; NPI is pruned before the response
   leaves the gateway. Unknown personas fail closed.
-- **Async writes** — fee and condition updates validate and enqueue to SQS FIFO (grouped by loan), return
-  `202` + job ID, retry MeridianLink record locks with backoff, and dead-letter after 5 attempts.
+- **Async writes** — fee, condition, and PDF document uploads validate and enqueue to SQS FIFO (grouped by
+  loan), return `202` + job ID, retry MeridianLink record locks with backoff, and dead-letter after 5 attempts.
+- **Loan document exchange** — broker keys upload a base64 PDF to MeridianLink `EDocsService`, list a loan's
+  documents, and download one by ID. The gateway caches the `AuthService` ticket for 50 minutes and reuses the
+  same job/retry pipeline.
 - **Role-scoped self-serve onboarding** — the lender shares a title, broker, or appraisal invite link;
   the vendor enters a company name and developer email; the gateway locks the key to that role's persona
   server-side. No admin token and no per-vendor admin work.
@@ -99,9 +102,12 @@ curl -s "$GATEWAY_URL/v1/jobs/$JOB_ID" -H "x-api-key: $KEY"
 | `PATCH` | `/v1/loans/{id}/fees` body `{ "fees": [{ "feeType": "…", "amount": 1350 }] }` | `x-api-key` | `202 { status, jobId, loanId, statusUrl }` |
 | `PATCH` | `/v1/loans/{id}` | `x-api-key` | `501` — only fee writes are implemented |
 | `POST` | `/v1/loans/{id}/conditions` body `{ "conditions": [{ "description": "…", "status": "Satisfied" }] }` | `x-api-key` | `202 { status, jobId, loanId, statusUrl }` (broker persona) |
+| `POST` | `/v1/loans/{id}/documents` body `{ "documentType": "…", "notes": "…", "contentBase64": "<PDF>" }` | `x-api-key` | `202 { status, jobId, loanId, statusUrl }` (broker persona) |
+| `GET` | `/v1/loans/{id}/documents` | `x-api-key` | `{ loanId, documents: [{ id, documentType, fileName, notes, uploadedAt }] }` (broker persona) |
+| `GET` | `/v1/loans/{id}/documents/{docId}` | `x-api-key` | `{ documentId, contentType: "application/pdf", contentBase64 }` (broker persona) |
 | `GET` | `/v1/jobs/{id}` | `x-api-key` | `{ jobId, loanId, status, attempts, createdAt, updatedAt, error }` |
 
-Job statuses: `PENDING` → `RETRYING` → `COMPLETED` / `FAILED`. Fee arrays are capped at 100 items. Fee writes are accepted only from `TITLE_VENDOR` and `TPO_BROKER`; an `AMC_VENDOR` key receives `403`.
+Job statuses: `PENDING` → `RETRYING` → `COMPLETED` / `FAILED`. Fee and condition arrays are capped at 100 items. Fee writes are accepted only from `TITLE_VENDOR` and `TPO_BROKER`; an `AMC_VENDOR` key receives `403`. Documents are `TPO_BROKER`-only for reads and writes. Uploads must be base64-encoded PDFs with a valid `%PDF-` signature and at most 180,000 decoded bytes (the SQS message limit); violations return `400`, `413`, or `415` before any job is created.
 
 ### Roles and personas
 
@@ -119,8 +125,8 @@ Job statuses: `PENDING` → `RETRYING` → `COMPLETED` / `FAILED`. Fee arrays ar
 
 ### Broker workflow coverage (verified against the local handler)
 
-Broker keys (`TPO_BROKER`) carry the widest read allowlist, but the API does not yet cover a full 1003,
-borrower documents, or condition responses. This is the current contract, asserted by `test/gateway.test.js`:
+Broker keys (`TPO_BROKER`) carry the widest read allowlist, but the API does not yet cover a full 1003.
+This is the current contract, asserted by `test/gateway.test.js`:
 
 | Broker need | Current API | Status |
 | --- | --- | --- |
@@ -129,13 +135,15 @@ borrower documents, or condition responses. This is the current contract, assert
 | Fee updates | `PATCH /v1/loans/{id}/fees` | Supported |
 | Full 1003 read | loan read | **Partial** — no employment, income, assets, liabilities, or declarations |
 | Full 1003 write | `PATCH /v1/loans/{id}` | **Not implemented** — returns `501` |
-| Borrower document upload | none | **Not implemented** |
+| Borrower document upload | `POST /v1/loans/{id}/documents` | Supported — broker persona; PDF only |
+| Document list and download | `GET /v1/loans/{id}/documents[/{docId}]` | Supported — broker persona |
 | Submit or update conditions | `POST /v1/loans/{id}/conditions` | Supported — broker persona; matched by description |
 
 SSN and credit score remain excluded for every persona by design. Condition submission follows MeridianLink's
-documented description-matched update behavior, so only changed conditions need to be sent. A full 1003 and
-borrower document upload are still blocked on sanitized MISMO shapes and the EDocs SOAP transport; a broker
-key cannot pass either through this API yet.
+documented description-matched update behavior, so only changed conditions need to be sent. Document upload,
+list, and download use the documented `EDocsService.asmx` methods with an `AuthService.asmx` ticket, but the
+SOAP shapes and the default `/edocs` mount path are exercised only against the local fake. A full 1003 still
+has no read or write shape, so a broker key cannot pass one through this API.
 
 ## Architecture
 
@@ -147,6 +155,8 @@ Vendor ──x-api-key────► API Gateway (usage plan)
                          ├── GET  /v1/fields         → schema proxy (5-min per-persona cache)
                          ├── GET  /v1/loans/{id}     → Masked MISMO→JSON read
                          ├── PATCH /v1/loans/{id}/fees → SQS FIFO enqueue → 202 + job
+                         ├── POST /v1/loans/{id}/documents → SQS FIFO → EDocs PDF upload
+                         ├── GET  /v1/loans/{id}/documents[/{docId}] → EDocs list/download
                          └── GET  /v1/jobs/{id}      → job status (owner only)
                                                         │
                               SQS FIFO (group = loan) ──┘─► Lambda worker ──► MeridianLink
@@ -155,7 +165,8 @@ Vendor ──x-api-key────► API Gateway (usage plan)
 ```
 
 Storage: DynamoDB tenants + jobs (TTL) · Secrets Manager (API password) · API Gateway key store.
-No loan documents are persisted; only the in-flight fee payload travels in the SQS message.
+No loan documents are persisted; only the in-flight write payload (MISMO XML or a base64 PDF) travels in the
+SQS message and is deleted with it.
 
 ## Local development
 
@@ -181,6 +192,7 @@ loans: `ML-998822` (normal), `ML-LOCKED-1` (always `423`), `ML-404` (missing).
 src/lambda.js         deployed Lambda (HTTP + SQS)
 src/app.js            routes, invites, reads, writes, job status, schema cache
 src/mismo.js          MISMO 3.4 XML ↔ vendor JSON
+src/edocs.js          EDocs SOAP response parsing (document list and base64 PDF)
 src/mask.js           persona allowlists
 src/roles.js          role → persona + invite env var
 src/portal.js         invite portal + cheat sheet
@@ -190,7 +202,7 @@ src/server.js         local HTTP adapter
 dev/                  fake upstream, memory store, drain runner
 infra/template.yaml   CloudFormation source (//__GATEWAY_CODE__ placeholder)
 template.yaml         generated deployable template (committed)
-scripts/build.js      bundle + inline + size guard + --check
+scripts/build.js      bundle + minified inline + size guard + --check
 deploy.sh             one-line CloudShell installer
 test/                 node:test unit, e2e, bundle and template guards
 ```
@@ -198,8 +210,9 @@ test/                 node:test unit, e2e, bundle and template guards
 ## Status and limitations
 
 Implemented and tested locally: MISMO translation, persona masking, invite onboarding, schema proxy
-and cache, synchronous reads, async FIFO writes with lock retries, job ownership, HTTP runtime, the
-single-file template, and the exact inline bundle the template deploys (executed in tests).
+and cache, synchronous reads, async FIFO writes with lock retries, job ownership, EDocs PDF upload with
+ticket caching, document list/download, HTTP runtime, the single-file template, and the exact inline bundle
+the template deploys (executed in tests).
 
 **Not deployed to AWS from this environment** (no AWS account or MeridianLink access). The template is
 structurally tested and the embedded handler is executed locally, but real resource behavior,
@@ -210,9 +223,11 @@ revocation UI), one shared usage plan/quota for all tenants, no CORS (server-to-
 no admin dashboard. Read responses are not cached server-side by design.
 
 Broker coverage is intentionally narrow today: reads include identity, property, terms, conditions, and
-lock status, and only fees are writable. A full 1003 submission, borrower document upload, and condition
-responses need real MISMO shapes and vendor endpoint confirmation; until then `PATCH /v1/loans/{id}`
-returns `501` rather than pretending to accept a loan update.
+lock status; fees, conditions, and PDF documents are writable. A full 1003 submission still needs real MISMO
+shapes, so `PATCH /v1/loans/{id}` returns `501` rather than pretending to accept a loan update. EDocs calls
+are verified only against `mock/meridian.js`: the SOAP envelopes follow the documented method and parameter
+names, but no real tenant has confirmed the response shapes or the default `/edocs` path. Uploads are capped
+at 180,000 bytes because the PDF travels inside the SQS message; larger files need an S3 staging hop.
 
 **No per-loan organization scoping.** A tenant mapping fixes the persona, not which loans a key may touch:
 `GET /v1/loans/{id}` and the fee write accept any loan ID the gateway's shared MeridianLink credentials can

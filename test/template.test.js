@@ -16,6 +16,11 @@ test("template stays under CloudFormation's direct upload limit", () => {
   assert.ok(Buffer.byteLength(template) < 51200, `template.yaml is ${Buffer.byteLength(template)} bytes`);
 });
 
+test("template keeps at least 1 KB of deployment headroom", () => {
+  const bytes = Buffer.byteLength(template);
+  assert.ok(bytes <= 51200 - 1024, `template.yaml is ${bytes} bytes (${51200 - bytes} bytes headroom)`);
+});
+
 test("template embeds the handler and leaves no placeholder", () => {
   assert.match(template, /ZipFile: \|/);
   assert.ok(template.includes("exports.handler"));

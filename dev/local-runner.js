@@ -12,7 +12,7 @@ function createLocalRunner({ store, meridian, maxAttempts = 5, retryDelayMs = 50
       message.receives += 1;
       const job = await store.getJob(message.jobId);
       try {
-        await processWrite({ job, mismo: message.mismo, meridian, store, attempts: message.receives, maxAttempts });
+        await processWrite({ job, mismo: message.mismo, doc: message.doc, meridian, store, attempts: message.receives, maxAttempts });
         summary.processed += 1;
       } catch (err) {
         summary.retried += 1;

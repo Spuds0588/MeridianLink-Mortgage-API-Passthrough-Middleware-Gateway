@@ -41,7 +41,7 @@ use?* If not, why not.
 
 This gateway is a **stateless passthrough**. It must never become a system of record.
 
-- Do **not** store loan data, borrower data, or MISMO documents at rest. Only tenant mappings, job status, and in-flight fee payloads (the SQS message body) exist.
+- Do **not** store loan data, borrower data, or MISMO documents at rest. Only tenant mappings, job status, and in-flight write payloads (MISMO XML or a base64 PDF in the SQS message body) exist.
 - Do **not** build a field translation dictionary. Definitions come from the source of truth (`GET /v1/fields`).
 - Do **not** add runtime dependencies. `fetch`, `node:http`, and the AWS SDK v3 that ships with the Lambda runtime are enough. Local development installs nothing.
 - Deny by default: any JSON path not in a persona allowlist is pruned before the response leaves the gateway.
@@ -74,7 +74,8 @@ All handlers emit structured JSON via `src/log.js`:
 | --- | --- |
 | `src/lambda.js` | Deployed handler: HTTP routes plus SQS FIFO records. |
 | `src/app.js` | Routing, invite provisioning, reads, writes, job status, schema cache. |
-| `src/mismo.js` | MISMO 3.4 XML → loan JSON; fee JSON → MISMO XML. |
+| `src/mismo.js` | MISMO 3.4 XML → loan JSON; fee/condition JSON → MISMO XML. |
+| `src/edocs.js` | EDocs SOAP response parsing (document list, base64 PDF). |
 | `src/mask.js` | Persona allowlists (deny by default). |
 | `src/roles.js` | `title`/`broker`/`appraisal` → persona and invite env var; timing-safe compare. |
 | `src/portal.js` | Invite portal HTML and the common-field cheat sheet. |
@@ -85,7 +86,7 @@ All handlers emit structured JSON via `src/log.js`:
 | `dev/memory-store.js`, `dev/local-runner.js` | In-memory AWS stand-ins. Never deployed. |
 | `infra/template.yaml` | CloudFormation source with a `//__GATEWAY_CODE__` placeholder. |
 | `template.yaml` | Generated, committed deployable template. Never edit by hand. |
-| `scripts/build.js` | Bundles `src/` into `dist/gateway.js`, inlines it, enforces the 51,200-byte limit, supports `--check`. |
+| `scripts/build.js` | Bundles `src/` into readable `dist/gateway.js`, minifies and inlines it, enforces the 51,200-byte limit, supports `--check`. |
 | `deploy.sh` | One-line AWS CloudShell deployment. |
 | `mock/meridian.js`, `fixtures/loan.xml` | Fake MeridianLink API and sample MISMO document. |
 | `test/*.test.js` | Unit, HTTP e2e, inline-bundle, template and CI guards (`node:test`). |
@@ -112,7 +113,7 @@ npm run verify    # build --check + tests (run before committing)
 
 - Target: API Gateway REST + usage plan, Lambda (Node 20, arm64) in a private subnet, NAT gateway with a static Elastic IP (MeridianLink's firewall allowlist), DynamoDB, SQS FIFO + DLQ, Secrets Manager, CloudFormation.
 - This machine has no AWS account, AWS CLI, or MeridianLink access. The template is logically tested (resources, wiring, size, embedded code, executed bundle) but **never deployed here**. `history.md` records that honestly.
-- `scripts/build.js` strips comments/indentation from the inlined deploy copy only, to stay under CloudFormation's 51,200-byte direct-upload limit. Keep source formatted; never hand-edit `template.yaml`.
+- `scripts/build.js` minifies whitespace from the inlined deploy copy only (dist stays readable) to stay under CloudFormation's 51,200-byte direct-upload limit. Current headroom is about 2 KB; a new source change must keep at least 1 KB, which `test/template.test.js` enforces. Keep source formatted; never hand-edit `template.yaml`.
 - Local fakes prove routing, auth, masking, caching, and retry behavior — not AWS resource behavior or real MISMO payload shapes.
 
 ## 9. Development Environment Hygiene (limited memory)

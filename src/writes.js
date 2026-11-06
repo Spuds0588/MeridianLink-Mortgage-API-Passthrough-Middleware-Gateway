@@ -7,17 +7,18 @@ const RETRYABLE = (status) => status === 423 || status === 429 || status >= 500;
 const fail = (store, job, attempts, error, now) => store.putJob({ ...job, status: "FAILED", attempts, error, updatedAt: new Date(now()).toISOString() });
 
 /**
- * Attempts one fee write. Returns normally when the job reached a terminal state;
- * throws for a retryable failure so SQS (or the local runner) redelivers it.
+ * Attempts one queued write (MISMO loan update or EDocs PDF upload). Returns
+ * normally when the job reached a terminal state; throws for a retryable
+ * failure so SQS (or the local runner) redelivers it.
  */
-async function processWrite({ job, mismo, meridian, store, attempts, maxAttempts = 5, now = Date.now }) {
+async function processWrite({ job, mismo, doc, meridian, store, attempts, maxAttempts = 5, now = Date.now }) {
   if (!job) return log("WARN", "JOB_NOT_FOUND", { attempts });
   if (job.status === "COMPLETED") return;
 
   const updatedAt = () => new Date(now()).toISOString();
   let response;
   try {
-    response = await meridian.updateLoan(job.loanId, mismo);
+    response = doc ? await meridian.uploadDocument(job.loanId, doc) : await meridian.updateLoan(job.loanId, mismo);
   } catch (err) {
     log("WARN", "WRITE_TRANSPORT_ERROR", { jobId: job.jobId, loanId: job.loanId, attempts, message: err.message });
     if (attempts >= maxAttempts) return void (await fail(store, job, attempts, err.message, now), log("ERROR", "WRITE_ATTEMPTS_EXHAUSTED", { jobId: job.jobId, attempts }));

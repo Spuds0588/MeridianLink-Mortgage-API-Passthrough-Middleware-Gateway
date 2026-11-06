@@ -2,8 +2,8 @@
 "use strict";
 
 /**
- * Builds dist/gateway.js (single CommonJS bundle) and inlines it into the
- * deployable template.yaml from infra/template.yaml.
+ * Builds dist/gateway.js (single CommonJS bundle, readable) and inlines a
+ * minified copy into the deployable template.yaml from infra/template.yaml.
  *
  * Usage: node scripts/build.js [--check]
  *   --check  fail if the committed template.yaml is out of date
@@ -60,35 +60,116 @@ module.exports = __require(${JSON.stringify(entryId)});
 `;
 }
 
+// Whitespace is insignificant outside strings, template literals and regex
+// literals. Collapsing it here keeps the inlined copy well under
+// CloudFormation's 51,200-byte direct-upload limit without a minifier
+// dependency or a zip/S3 artifact.
+const ID = /[A-Za-z0-9_$]/;
+const REGEX_PRECEDER = new Set(["(", "[", "{", ",", ";", ":", "=", "!", "?", "+", "-", "*", "%", "&", "|", "^", "~", "<", ">"]);
+const REGEX_KEYWORD = new Set(["return", "typeof", "instanceof", "in", "of", "new", "delete", "void", "do", "else", "case", "yield", "await"]);
+const ASI_KEYWORD = /^(?:return|throw|break|continue|yield)$/;
+
+function minify(code) {
+  let out = "";
+  let prev = "";
+  let newline = false;
+  let i = 0;
+
+  const regexAllowed = () => !prev || REGEX_PRECEDER.has(prev) || REGEX_KEYWORD.has(prev);
+
+  while (i < code.length) {
+    const c = code[i];
+    if (/\s/.test(c)) {
+      if (c === "\n") newline = true;
+      i += 1;
+      continue;
+    }
+    if (c === "/" && code[i + 1] === "/") {
+      const end = code.indexOf("\n", i);
+      newline = true;
+      i = end < 0 ? code.length : end;
+      continue;
+    }
+    if (c === "/" && code[i + 1] === "*") {
+      const end = code.indexOf("*/", i + 2);
+      if (code.slice(i, end).includes("\n")) newline = true;
+      i = end < 0 ? code.length : end + 2;
+      continue;
+    }
+
+    let token;
+    if (c === '"' || c === "'") {
+      let j = i + 1;
+      while (j < code.length && code[j] !== c) j += code[j] === "\\" ? 2 : 1;
+      token = code.slice(i, j + 1);
+    } else if (c === "`") {
+      let j = i + 1;
+      while (j < code.length && code[j] !== "`") j += code[j] === "\\" ? 2 : 1;
+      token = code.slice(i, j + 1);
+    } else if (c === "/" && regexAllowed()) {
+      let j = i + 1;
+      let inClass = false;
+      while (j < code.length) {
+        const ch = code[j];
+        if (ch === "\\") {
+          j += 2;
+          continue;
+        }
+        if (ch === "\n") break;
+        if (ch === "[") inClass = true;
+        else if (ch === "]") inClass = false;
+        else if (ch === "/" && !inClass) {
+          j += 1;
+          break;
+        }
+        j += 1;
+      }
+      while (j < code.length && /[a-z]/i.test(code[j])) j += 1;
+      token = code.slice(i, j);
+    } else if (/[0-9]/.test(c) || (c === "." && /[0-9]/.test(code[i + 1] || ""))) {
+      token = /^(?:0[xX][\da-fA-F_]+|0[bB][01_]+|0[oO][0-7_]+|\d[\d_]*(?:\.[\d_]*)?|\.[\d_]+)(?:[eE][+-]?[\d_]+)?/.exec(code.slice(i))[0];
+    } else if (ID.test(c)) {
+      token = /^[A-Za-z0-9_$]+/.exec(code.slice(i))[0];
+    } else {
+      token = c;
+    }
+
+    if (!token) {
+      i += 1;
+      continue;
+    }
+    const last = prev ? prev[prev.length - 1] : "";
+    const next = token[0];
+    if (prev && newline && ASI_KEYWORD.test(prev)) out += "\n";
+    if (
+      prev &&
+      ((ID.test(last) && ID.test(next)) ||
+        ((last === "+" || last === "-") && last === next) ||
+        (last === "/" && (next === "/" || next === "*")))
+    ) {
+      out += " ";
+    }
+    out += token;
+    prev = token;
+    newline = false;
+    i += token.length;
+  }
+  return out;
+}
+
 const code = bundle(entry);
 const source = fs.readFileSync(sourcePath, "utf8");
 if (!PLACEHOLDER.test(source)) throw new Error(`${sourcePath} is missing the //__GATEWAY_CODE__ placeholder`);
 
-// The deploy copy drops comments, leading indentation, and blank lines to fit
-// CloudFormation's 51,200-byte direct-upload limit. dist/gateway.js keeps the
-// readable form.
-const stripComments = (source) => {
-  const lines = [];
-  let inBlock = false;
-  for (const line of source.split("\n")) {
-    const trimmed = line.trim();
-    if (inBlock) {
-      if (trimmed.endsWith("*/")) inBlock = false;
-      continue;
-    }
-    if (trimmed.startsWith("//")) continue;
-    if (trimmed.startsWith("/*")) {
-      inBlock = !trimmed.endsWith("*/");
-      continue;
-    }
-    lines.push(line);
-  }
-  return lines;
-};
+const minified = minify(code);
+try {
+  new Function("require", "module", "exports", minified);
+} catch (err) {
+  throw new Error(`Minified bundle does not parse: ${err.message}`);
+}
 
-const inlined = stripComments(code)
-  .map((line) => line.replace(/^[ \t]+/, ""))
-  .filter((line) => line.length > 0)
+const inlined = minified
+  .split("\n")
   .map((line) => INDENT + line)
   .join("\n");
 
@@ -105,8 +186,8 @@ if (process.argv.includes("--check")) {
     console.error("template.yaml is stale. Run: npm run build");
     process.exit(1);
   }
-  console.log(`template.yaml is up to date (${bytes} bytes)`);
+  console.log(`template.yaml is up to date (${bytes} bytes, ${LIMIT_BYTES - bytes} bytes headroom)`);
 } else {
   fs.writeFileSync(outputPath, rendered);
-  console.log(`Wrote dist/gateway.js (${Buffer.byteLength(code)} bytes) and template.yaml (${bytes} bytes)`);
+  console.log(`Wrote dist/gateway.js (${Buffer.byteLength(code)} bytes) and template.yaml (${bytes} bytes, ${LIMIT_BYTES - bytes} bytes headroom)`);
 }

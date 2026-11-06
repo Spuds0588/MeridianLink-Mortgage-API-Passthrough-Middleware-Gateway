@@ -11,6 +11,7 @@ function createHandler({ store, env = process.env, meridian, now = () => Date.no
       client = createMeridian({
         baseUrl: env.MERIDIAN_BASE_URL,
         username: env.MERIDIAN_USERNAME,
+        edocsUrl: env.MERIDIAN_EDOCS_URL,
         passwordProvider: async () => (await store.getSecret()).password,
         timeoutMs: env.UPSTREAM_TIMEOUT_MS
       });
@@ -20,6 +21,9 @@ function createHandler({ store, env = process.env, meridian, now = () => Date.no
   const lazyMeridian = {
     getLoan: (loanId) => getClient().getLoan(loanId),
     updateLoan: (loanId, xml) => getClient().updateLoan(loanId, xml),
+    uploadDocument: (loanId, doc) => getClient().uploadDocument(loanId, doc),
+    listDocuments: (loanId) => getClient().listDocuments(loanId),
+    downloadDocument: (documentId) => getClient().downloadDocument(documentId),
     getFields: (ids) => getClient().getFields(ids)
   };
 
@@ -33,7 +37,15 @@ function createHandler({ store, env = process.env, meridian, now = () => Date.no
       try {
         const message = JSON.parse(record.body || "{}");
         jobId = message.jobId;
-        await processWrite({ job: await store.getJob(message.jobId), mismo: message.mismo, meridian: lazyMeridian, store, attempts, now });
+        await processWrite({
+          job: await store.getJob(message.jobId),
+          mismo: message.mismo,
+          doc: message.doc,
+          meridian: lazyMeridian,
+          store,
+          attempts,
+          now
+        });
       } catch (err) {
         log("WARN", "WRITE_RETRY_SCHEDULED", { jobId, messageId: record.messageId, attempts, message: err.message });
         batchItemFailures.push({ itemIdentifier: record.messageId });

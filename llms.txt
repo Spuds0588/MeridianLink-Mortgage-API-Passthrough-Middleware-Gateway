@@ -1,6 +1,6 @@
 # MeridianLink Mortgage API Passthrough & Middleware Gateway
 
-> A community-supported, open-source AWS middleware template for MeridianLink Mortgage: MISMO 3.4 XML to JSON reads, persona schema masking, asynchronous FIFO fee writes, role-scoped vendor onboarding, field schema discovery, and a static egress IP for the vendor firewall allowlist. It stores no loan documents. It is not affiliated with or endorsed by MeridianLink.
+> A community-supported, open-source AWS middleware template for MeridianLink Mortgage: MISMO 3.4 XML to JSON reads, persona schema masking, asynchronous FIFO fee, condition, and EDocs PDF writes, role-scoped vendor onboarding, field schema discovery, and a static egress IP for the vendor firewall allowlist. It stores no loan documents. It is not affiliated with or endorsed by MeridianLink.
 
 The maintainer cannot access a MeridianLink tenant or a lender AWS account, so real-world validation is a shared community responsibility. Reproducible bugs, sanitized field shapes, and upstream fixes belong in GitHub issues and pull requests. This project only improves when deployments report back.
 
@@ -22,7 +22,8 @@ The maintainer cannot access a MeridianLink tenant or a lender AWS account, so r
 - Deploys one self-contained AWS Lambda behind API Gateway, with DynamoDB, SQS FIFO plus DLQ, Secrets Manager, and one CloudFormation template under the 51,200-byte direct-upload limit.
 - Converts MISMO 3.4 XML loan documents into a small JSON contract: `loanId`, `milestone`, `property`, `terms`, `fees`, plus persona-permitted extras.
 - Masks responses with deny-by-default persona allowlists. Unknown personas fail closed. Borrower SSN, credit score, and income never reach a title or appraisal key.
-- Queues fee writes asynchronously through SQS FIFO, grouped by loan, and retries MeridianLink record locks (`423`), throttling (`429`), and `5xx` responses up to five attempts before dead-lettering.
+- Queues fee, condition, and PDF document writes asynchronously through SQS FIFO, grouped by loan, and retries MeridianLink record locks (`423`), throttling (`429`), and `5xx` responses up to five attempts before dead-lettering.
+- Uploads and downloads loan documents through MeridianLink `EDocsService.asmx` (`ListEdocsByLoanNumber`, `UploadPDFDocument`, `DownloadEdocsPdfById`), caching the `AuthService.asmx` ticket for 50 minutes. Uploads are base64 PDFs capped at 180,000 bytes because the payload rides in the SQS message.
 - Provides role-scoped invite onboarding for title/settlement, TPO/broker, and AMC/appraisal partners. The server chooses the persona from the role; clients cannot choose it or widen it.
 - Proxies `GET /v1/fields?ids=...` to MeridianLink and caches definitions per persona for five minutes.
 - Provisions a VPC, NAT gateway, and Elastic IP so MeridianLink can allowlist one static egress address.
@@ -37,9 +38,12 @@ The maintainer cannot access a MeridianLink tenant or a lender AWS account, so r
 - `GET /v1/loans/{loanId}`
 - `PATCH /v1/loans/{loanId}/fees` with `{ "fees": [{ "feeType": "...", "amount": 1350 }] }`
 - `POST /v1/loans/{loanId}/conditions` with `{ "conditions": [{ "description": "...", "status": "Satisfied" }] }` (broker persona; matched by description)
+- `POST /v1/loans/{loanId}/documents` with `{ "documentType": "...", "notes": "...", "contentBase64": "<PDF>" }` (broker persona; 202 + job ID)
+- `GET /v1/loans/{loanId}/documents` (broker persona; list with ids/types/names)
+- `GET /v1/loans/{loanId}/documents/{docId}` (broker persona; `{ contentType: "application/pdf", contentBase64 }`)
 - `GET /v1/jobs/{jobId}`
 
-All `/v1/*` routes require `x-api-key`. The portal and health check are the only unauthenticated HTTP routes. Fee writes are accepted only from `TITLE_VENDOR` and `TPO_BROKER`; an `AMC_VENDOR` key receives `403` and no job is queued.
+All `/v1/*` routes require `x-api-key`. The portal and health check are the only unauthenticated HTTP routes. Fee writes are accepted only from `TITLE_VENDOR` and `TPO_BROKER`; an `AMC_VENDOR` key receives `403` and no job is queued. Conditions and all document routes are `TPO_BROKER`-only. Document uploads reject non-base64 content (`400`), non-PDF content (`415`), and files over 180,000 decoded bytes (`413`) before enqueueing.
 
 ## Deploy and verify locally
 
@@ -79,9 +83,10 @@ All `/v1/*` routes require `x-api-key`. The portal and health check are the only
 
 ## Verification status and limitations
 
-- Verified locally and in CI: routing, invite validation and persona locking, masking and NPI pruning, field schema lookup and cache, reads, async writes with retry classification, job ownership, template sync and size, and execution of the exact inline Lambda bundle.
+- Verified locally and in CI: routing, invite validation and persona locking, masking and NPI pruning, field schema lookup and cache, reads, async writes with retry classification, job ownership, EDocs upload/list/download with ticket reuse, upload size/type/auth rejections, a 2,027-byte template headroom, and execution of the exact inline Lambda bundle.
+- EDocs itself is mocked: the SOAP envelopes follow the documented `AuthService`/`EDocsService` method and parameter names, but no real tenant has confirmed response shapes or the default `/edocs` mount path. Uploads above 180,000 bytes are rejected rather than staged in S3.
 - Not verified by the maintainers: a real CloudFormation deployment, API Gateway key creation, DynamoDB/SQS behavior, live MeridianLink authentication, loan reads and writes, the static egress IP allowlist, and real MISMO response shapes for any tenant.
-- Broker coverage: reads expose identity, property, terms, conditions, and lock status; fee writes and condition submission are supported (`POST /v1/loans/{id}/conditions`, broker only). A full 1003 (employment, income, assets, liabilities, declarations) and borrower document upload are not implemented; `PATCH /v1/loans/{id}` returns `501`. Do not build a broker integration that assumes those paths exist.
+- Broker coverage: reads expose identity, property, terms, conditions, and lock status; fee writes, condition submission, PDF upload, document listing, and document download are supported (all broker-only where noted). A full 1003 (employment, income, assets, liabilities, declarations) is not implemented; `PATCH /v1/loans/{id}` returns `501`. Do not build a broker integration that assumes a full 1003 exists.
 - No per-loan organization scoping: a key is limited by persona, not by which loans it may touch. Any valid key can request any loan ID the shared MeridianLink credential can reach, so do not expose one tenant's key to a competitor without adding a loan-to-organization check.
 - Known limitations: one shared usage plan, global per-role invite codes rather than single-use vendor invites, no revocation UI, no CORS, no admin dashboard, and a curated cheat sheet that only covers common JSON paths.
 - The landing page is served from GitHub Pages. The API is deployed separately into each lender's AWS account.

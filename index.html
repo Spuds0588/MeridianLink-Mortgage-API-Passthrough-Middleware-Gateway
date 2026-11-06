@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>MeridianLink Mortgage API Gateway | Community-Supported AWS Middleware</title>
-<meta name="description" content="Community-supported, open-source AWS middleware for MeridianLink Mortgage: MISMO 3.4 XML to JSON reads, persona schema masking, async FIFO fee writes, role-scoped vendor onboarding, and field schema discovery. Deploy with one CloudFormation template.">
+<meta name="description" content="Community-supported, open-source AWS middleware for MeridianLink Mortgage: MISMO 3.4 XML to JSON reads, persona schema masking, async FIFO fee, condition, and EDocs PDF writes, role-scoped vendor onboarding, and field schema discovery. Deploy with one CloudFormation template.">
 <meta name="keywords" content="MeridianLink API, MeridianLink Mortgage, MISMO 3.4, mortgage middleware, AWS Lambda, CloudFormation, API gateway, field schema, open source">
 <meta name="author" content="Community contributors">
 <meta name="robots" content="index,follow,max-snippet:-1,max-image-preview:large,max-video-preview:-1">
@@ -37,7 +37,7 @@
       "@type": "SoftwareSourceCode",
       "@id": "https://spuds0588.github.io/MeridianLink-Mortgage-API-Passthrough-Middleware-Gateway/#software",
       "name": "MeridianLink Mortgage API Passthrough & Middleware Gateway",
-      "description": "Stateless AWS middleware for MISMO 3.4 to JSON reads, persona schema masking, asynchronous FIFO fee writes, role-scoped onboarding, and field schema discovery.",
+      "description": "Stateless AWS middleware for MISMO 3.4 to JSON reads, persona schema masking, asynchronous FIFO fee, condition, and EDocs PDF writes, role-scoped onboarding, and field schema discovery.",
       "codeRepository": "https://github.com/Spuds0588/MeridianLink-Mortgage-API-Passthrough-Middleware-Gateway",
       "license": "https://opensource.org/license/mit",
       "programmingLanguage": { "@type": "ComputerLanguage", "name": "JavaScript" },
@@ -52,7 +52,7 @@
         {
           "@type": "Question",
           "name": "Does the gateway store loan data?",
-          "acceptedAnswer": { "@type": "Answer", "text": "No. It stores tenant mappings, job status with a TTL, and the in-flight fee payload in the queue message. Loan documents and borrower data stay in MeridianLink." }
+          "acceptedAnswer": { "@type": "Answer", "text": "No. It stores tenant mappings, job status with a TTL, and the in-flight write payload in the queue message. Loan documents and borrower data stay in MeridianLink." }
         },
         {
           "@type": "Question",
@@ -62,7 +62,7 @@
         {
           "@type": "Question",
           "name": "Can a broker submit a full 1003, upload documents, or respond to conditions?",
-          "acceptedAnswer": { "@type": "Answer", "text": "Partly. Broker keys read identity, property, terms, conditions, and lock status, queue fee updates, and submit condition updates through POST /v1/loans/{id}/conditions, which MeridianLink matches by description. Full 1003 sections and borrower document upload have no write path: PATCH /v1/loans/{id} returns 501 and document routes are not implemented." }
+          "acceptedAnswer": { "@type": "Answer", "text": "Partly. Broker keys read identity, property, terms, conditions, and lock status, queue fee updates, submit condition updates through POST /v1/loans/{id}/conditions, upload PDFs through POST /v1/loans/{id}/documents, and list or download loan documents. Full 1003 sections still have no write path: PATCH /v1/loans/{id} returns 501." }
         },
         {
           "@type": "Question",
@@ -193,7 +193,7 @@
     <section class="hero" aria-labelledby="hero-title">
       <p class="kicker">Community-supported · MIT · AWS Lambda</p>
       <h1 id="hero-title">A small, stable API in front of MeridianLink Mortgage.</h1>
-      <p class="lede">An open-source, stateless middleware template that turns MISMO 3.4 XML into clean JSON, masks borrower NPI per persona, queues fee writes through a FIFO pipeline, and onboards title, broker, and appraisal partners with role invite links. It deploys into the lender's AWS account and never stores loan documents.</p>
+      <p class="lede">An open-source, stateless middleware template that turns MISMO 3.4 XML into clean JSON, masks borrower NPI per persona, queues fee, condition, and PDF document writes through a FIFO pipeline, and onboards title, broker, and appraisal partners with role invite links. It deploys into the lender's AWS account and never stores loan documents.</p>
       <div class="actions">
         <a class="button urgent" href="https://github.com/Spuds0588/MeridianLink-Mortgage-API-Passthrough-Middleware-Gateway/issues/new?template=bug_report.yml">Report a bug</a>
         <a class="button primary" href="#deploy">Deploy the template</a>
@@ -244,8 +244,12 @@
           <p>Deny-by-default allowlists per role. SSN, credit score, and income never reach a title or appraisal key. Unknown personas fail closed.</p>
         </article>
         <article class="card">
-          <h3>Async fee writes</h3>
-          <p><code>PATCH /v1/loans/&#123;id&#125;/fees</code> returns <code>202</code> with a job ID, retries record locks with backoff, and dead-letters after five attempts.</p>
+          <h3>Async writes</h3>
+          <p>Fee, condition, and PDF upload requests return <code>202</code> with a job ID, retry record locks with backoff, and dead-letter after five attempts.</p>
+        </article>
+        <article class="card">
+          <h3>Document exchange</h3>
+          <p>Broker keys upload PDFs to MeridianLink EDocs, list a loan's documents, and download one by ID. The EDocs ticket is cached across jobs.</p>
         </article>
         <article class="card">
           <h3>Invite onboarding</h3>
@@ -284,6 +288,10 @@
             <tr><td><code>GET</code></td><td><code>/v1/fields?ids=11,646</code></td><td>Field definitions from MeridianLink</td></tr>
             <tr><td><code>GET</code></td><td><code>/v1/loans/&#123;id&#125;</code></td><td>Masked MISMO-to-JSON read</td></tr>
             <tr><td><code>PATCH</code></td><td><code>/v1/loans/&#123;id&#125;/fees</code></td><td>Queue fee updates, return <code>202</code> and a job ID</td></tr>
+            <tr><td><code>POST</code></td><td><code>/v1/loans/&#123;id&#125;/conditions</code></td><td>Queue condition updates (broker only)</td></tr>
+            <tr><td><code>POST</code></td><td><code>/v1/loans/&#123;id&#125;/documents</code></td><td>Queue a base64 PDF upload (broker only)</td></tr>
+            <tr><td><code>GET</code></td><td><code>/v1/loans/&#123;id&#125;/documents</code></td><td>List loan documents (broker only)</td></tr>
+            <tr><td><code>GET</code></td><td><code>/v1/loans/&#123;id&#125;/documents/&#123;docId&#125;</code></td><td>Download one PDF as base64 (broker only)</td></tr>
             <tr><td><code>GET</code></td><td><code>/v1/jobs/&#123;id&#125;</code></td><td>Job status, owner only</td></tr>
           </tbody>
         </table>
@@ -303,11 +311,11 @@ npm run build     # regenerate dist/gateway.js and template.yaml</code></pre>
       <h2 id="faq-title">Common questions</h2>
       <details>
         <summary>Does the gateway store loan data?</summary>
-        <p>No. It stores tenant mappings, job status with a TTL, and the in-flight fee payload in the queue message. Loan documents and borrower data stay in MeridianLink, which remains the system of record.</p>
+        <p>No. It stores tenant mappings, job status with a TTL, and the in-flight write payload in the queue message. Loan documents and borrower data stay in MeridianLink, which remains the system of record.</p>
       </details>
       <details>
         <summary>Can I try it without MeridianLink or AWS access?</summary>
-        <p>Yes. <code>npm run dev</code> and <code>npm test</code> run the real handler against a local fake, with no accounts required. What that cannot prove is live authentication, real MISMO shapes, AWS resource behavior, or the egress allowlist.</p>
+        <p>Yes. <code>npm run dev</code> and <code>npm test</code> run the real handler against a local fake, including the EDocs SOAP transport, with no accounts required. What that cannot prove is live authentication, real MISMO or EDocs shapes, AWS resource behavior, or the egress allowlist.</p>
       </details>
       <details>
         <summary>How do I report a bug or become a contributor?</summary>
@@ -315,11 +323,11 @@ npm run build     # regenerate dist/gateway.js and template.yaml</code></pre>
       </details>
       <details>
         <summary>What has not been verified?</summary>
-        <p>A real CloudFormation deployment, API Gateway key creation, DynamoDB and SQS behavior, live MeridianLink authentication, loan reads and writes, the static egress allowlist, and real MISMO response shapes. The template is structurally tested and the inline Lambda bundle is executed locally; that is different from a live tenant.</p>
+        <p>A real CloudFormation deployment, API Gateway key creation, DynamoDB and SQS behavior, live MeridianLink authentication, loan reads and writes, the static egress allowlist, real MISMO response shapes, and the EDocs SOAP response shapes or mount path. The template is structurally tested and the inline Lambda bundle is executed locally; that is different from a live tenant.</p>
       </details>
       <details>
         <summary>Can a broker submit a full 1003, upload borrower documents, or respond to conditions?</summary>
-        <p>Partly. Broker keys can read identity, property, terms, conditions, and lock status, queue fee updates, and submit condition updates through <code>POST /v1/loans/&#123;id&#125;/conditions</code>; MeridianLink matches conditions by description, so only the changed rows need to be sent. Full 1003 sections and borrower document upload still have no write path: <code>PATCH /v1/loans/&#123;id&#125;</code> returns <code>501</code>, and document routes are not implemented.</p>
+        <p>Partly. Broker keys can read identity, property, terms, conditions, and lock status, queue fee updates, submit condition updates through <code>POST /v1/loans/&#123;id&#125;/conditions</code>, and upload, list, and download loan documents through the document routes. Uploads must be base64 PDFs of at most 180,000 bytes. Full 1003 sections still have no write path: <code>PATCH /v1/loans/&#123;id&#125;</code> returns <code>501</code>.</p>
       </details>
       <details>
         <summary>Why is the invite model role-scoped instead of open?</summary>

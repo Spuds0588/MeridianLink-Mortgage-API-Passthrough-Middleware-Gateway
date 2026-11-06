@@ -16,11 +16,11 @@ const httpEvent = ({ method = "GET", path, query = null, body = null, apiKeyId =
   requestContext: { requestId: "request-1", identity: apiKeyId ? { apiKeyId } : {} }
 });
 
-async function setup(t, { lockOnWrite = 0 } = {}) {
+async function setup(t, { lockOnWrite = 0, password = "demo" } = {}) {
   const mock = createMockMeridian({ lockOnWrite });
   const { url } = await mock.listen(0);
   const store = createMemoryStore();
-  const meridian = createMeridian({ baseUrl: url, username: "demo", password: "demo" });
+  const meridian = createMeridian({ baseUrl: url, username: "demo", password });
   const app = createApp({ store, meridian, env: localEnv() });
   const runner = createLocalRunner({ store, meridian, retryDelayMs: 1 });
   t.after(() => mock.close());
@@ -313,15 +313,15 @@ test("broker read exposes identity, property, terms and conditions but no 1003 d
   }
 });
 
-test("broker writes are limited to fees; 1003, document and condition writes fail loudly", async (t) => {
+test("broker writes cover fees, conditions and documents; 1003 writes fail loudly", async (t) => {
   const { call, tenantKey } = await setup(t);
   const broker = await tenantKey({ role: "broker", code: INVITES.broker, tenantName: "Acme Brokers", email: "dev@acme.test" });
 
   const loanPatch = await call("PATCH", "/v1/loans/ML-998822", { apiKeyId: broker.apiKeyId, body: { borrower: { name: "Dana Borrower" } } });
   assert.equal(loanPatch.statusCode, 501);
-  assert.match(JSON.parse(loanPatch.body).error, /Only fee writes are supported/);
+  assert.match(JSON.parse(loanPatch.body).error, /Only fee, condition, and document writes are supported/);
 
-  assert.equal((await call("POST", "/v1/loans/ML-998822/documents", { apiKeyId: broker.apiKeyId, body: { name: "paystub.pdf" } })).statusCode, 404);
+  assert.equal((await call("POST", "/v1/loans/ML-998822/documents", { apiKeyId: broker.apiKeyId, body: { name: "paystub.pdf" } })).statusCode, 400);
   assert.equal((await call("PATCH", "/v1/loans/ML-998822/conditions/1", { apiKeyId: broker.apiKeyId, body: { status: "Satisfied" } })).statusCode, 404);
 
   const fees = await call("PATCH", "/v1/loans/ML-998822/fees", {
@@ -360,6 +360,105 @@ test("condition submission is broker-only and validated", async (t) => {
   assert.equal((await post(broker.apiKeyId, { conditions: [{ description: "", status: "Open" }] })).statusCode, 400);
   assert.equal((await post(broker.apiKeyId, { conditions: [{ description: "X", status: 7 }] })).statusCode, 400);
   assert.equal((await call("GET", "/v1/loans/ML-998822/conditions", { apiKeyId: broker.apiKeyId })).statusCode, 405);
+});
+
+const PDF = Buffer.from("%PDF-1.4\npaystub\n%%EOF").toString("base64");
+
+test("broker uploads a PDF through the FIFO queue and the worker reaches EDocs", async (t) => {
+  const { call, runner, store, mock, tenantKey } = await setup(t);
+  const broker = await tenantKey({ role: "broker", code: INVITES.broker, tenantName: "Acme Brokers", email: "dev@acme.test" });
+
+  const res = await call("POST", "/v1/loans/ML-998822/documents", {
+    apiKeyId: broker.apiKeyId,
+    body: { documentType: "Paystub", notes: "November", contentBase64: PDF }
+  });
+  assert.equal(res.statusCode, 202);
+  const accepted = JSON.parse(res.body);
+  assert.match(accepted.jobId, /^job_/);
+  assert.equal(accepted.statusUrl, `/v1/jobs/${accepted.jobId}`);
+  assert.equal(store.queue[0].doc.documentType, "Paystub");
+  assert.equal(store.queue[0].doc.contentBase64, PDF);
+  assert.equal(store.queue[0].mismo, undefined);
+  assert.equal((await store.getJob(accepted.jobId)).doc, undefined, "the job record must not persist the PDF");
+
+  const pending = JSON.parse((await call("GET", accepted.statusUrl, { apiKeyId: broker.apiKeyId })).body);
+  assert.equal(pending.status, "PENDING");
+
+  await runner.drain();
+  const job = JSON.parse((await call("GET", accepted.statusUrl, { apiKeyId: broker.apiKeyId })).body);
+  assert.equal(job.status, "COMPLETED");
+  assert.equal(job.attempts, 1);
+  assert.deepEqual(mock.state.edocsRequests, ["UploadPDFDocument"]);
+  assert.equal(mock.state.documents.get("ML-998822")[0].contentBase64, PDF);
+  assert.equal(mock.state.ticketCalls, 1);
+});
+
+test("document list and download round-trip through EDocs with ticket reuse", async (t) => {
+  const { call, runner, mock, tenantKey } = await setup(t);
+  const broker = await tenantKey({ role: "broker", code: INVITES.broker, tenantName: "Acme Brokers", email: "dev@acme.test" });
+  const upload = async (documentType) => {
+    const res = await call("POST", "/v1/loans/ML-998822/documents", { apiKeyId: broker.apiKeyId, body: { documentType, contentBase64: PDF } });
+    assert.equal(res.statusCode, 202);
+    await runner.drain();
+  };
+
+  await upload("Paystub");
+  await upload("W2");
+  assert.equal(mock.state.ticketCalls, 1, "the auth ticket must be cached across writes");
+
+  const list = await call("GET", "/v1/loans/ML-998822/documents", { apiKeyId: broker.apiKeyId });
+  assert.equal(list.statusCode, 200);
+  assert.equal(list.headers["Cache-Control"], "private, max-age=15");
+  const { documents } = JSON.parse(list.body);
+  assert.equal(documents.length, 2);
+  assert.equal(documents[0].documentType, "Paystub");
+  assert.equal(documents[1].documentType, "W2");
+  assert.ok(documents[0].id);
+
+  const download = await call("GET", `/v1/loans/ML-998822/documents/${documents[0].id}`, { apiKeyId: broker.apiKeyId });
+  assert.equal(download.statusCode, 200);
+  assert.equal(download.headers["Cache-Control"], "no-store");
+  const body = JSON.parse(download.body);
+  assert.equal(body.documentId, documents[0].id);
+  assert.equal(body.contentType, "application/pdf");
+  assert.equal(body.contentBase64, PDF);
+  assert.equal(mock.state.ticketCalls, 1, "reads must reuse the cached ticket too");
+});
+
+test("document routes are broker-only and reject bad payloads", async (t) => {
+  const { call, tenantKey, store } = await setup(t);
+  const broker = await tenantKey({ role: "broker", code: INVITES.broker, tenantName: "Acme Brokers", email: "dev@acme.test" });
+  const title = await tenantKey();
+  const upload = (apiKeyId, body) => call("POST", "/v1/loans/ML-998822/documents", { apiKeyId, body });
+
+  assert.equal((await upload(title.apiKeyId, { documentType: "Paystub", contentBase64: PDF })).statusCode, 403);
+  assert.equal((await upload(broker.apiKeyId, { documentType: "Paystub" })).statusCode, 400);
+  assert.equal((await upload(broker.apiKeyId, { documentType: "", contentBase64: PDF })).statusCode, 400);
+  assert.equal((await upload(broker.apiKeyId, { documentType: "Paystub", notes: "x".repeat(501), contentBase64: PDF })).statusCode, 400);
+  assert.equal((await upload(broker.apiKeyId, { documentType: "Paystub", contentBase64: "not base64!!" })).statusCode, 400);
+  assert.equal(
+    (await upload(broker.apiKeyId, { documentType: "Paystub", contentBase64: Buffer.from("plain text").toString("base64") })).statusCode,
+    415
+  );
+  const oversized = Buffer.concat([Buffer.from("%PDF-"), Buffer.alloc(180001)]).toString("base64");
+  const tooBig = await upload(broker.apiKeyId, { documentType: "Paystub", contentBase64: oversized });
+  assert.equal(tooBig.statusCode, 413);
+  assert.equal(JSON.parse(tooBig.body).maxBytes, 180000);
+  assert.equal(store.queue.length, 0, "a rejected upload must not enqueue a job");
+
+  assert.equal((await call("GET", "/v1/loans/ML-998822/documents")).statusCode, 403);
+  assert.equal((await call("GET", "/v1/loans/ML-998822/documents", { apiKeyId: title.apiKeyId })).statusCode, 403);
+  assert.equal((await call("GET", "/v1/loans/ML-998822/documents/doc_1", { apiKeyId: title.apiKeyId })).statusCode, 403);
+  assert.equal((await call("PUT", "/v1/loans/ML-998822/documents", { apiKeyId: broker.apiKeyId })).statusCode, 405);
+});
+
+test("document reads fail closed when EDocs rejects the ticket", async (t) => {
+  const { call, tenantKey } = await setup(t, { password: "wrong" });
+  const broker = await tenantKey({ role: "broker", code: INVITES.broker, tenantName: "Acme Brokers", email: "dev@acme.test" });
+
+  const res = await call("GET", "/v1/loans/ML-998822/documents", { apiKeyId: broker.apiKeyId });
+  assert.equal(res.statusCode, 502);
+  assert.match(JSON.parse(res.body).error, /document request failed/i);
 });
 
 test("appraisal persona cannot write fees", async (t) => {

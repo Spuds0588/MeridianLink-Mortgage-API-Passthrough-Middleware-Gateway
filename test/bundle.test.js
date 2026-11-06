@@ -26,7 +26,7 @@ function extractInlineCode(template) {
 
 test("the template's inline Lambda bundle serves the full flow", async (t) => {
   const code = extractInlineCode(fs.readFileSync(path.join(root, "template.yaml"), "utf8"));
-  assert.match(code, /const __defs = \{/, "bundle must inline its modules");
+  assert.match(code, /const __defs=\s*\{/, "bundle must inline its modules");
   assert.match(code, /function __require\(id\)/, "bundle must resolve inlined modules");
   assert.ok(!code.includes("__GATEWAY_CODE__"));
 
