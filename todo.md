@@ -34,6 +34,7 @@ Legend: `[ ]` pending · `[~]` in progress · `[x]` done · `[—]` deliberately
 - [x] Broker capability audit (2026-11-06): partial 1003 read, fee-only writes, no document or condition writes
 - [x] `PATCH /v1/loans/{id}` returns `501` instead of acting as an undocumented fees alias
 - [—] Full 1003 read/write, borrower document upload, and condition responses (blocked: needs sanitized MeridianLink MISMO samples plus confirmed vendor endpoints; inventing shapes would violate the no-guess rule)
+- [—] Per-loan organization scoping (blocked: the MISMO samples carry no loan-to-organization field; until then any valid key can request any loan ID the shared credential reaches)
 
 ## Phase 5 — Self-Serve Onboarding (sister-project parity)
 

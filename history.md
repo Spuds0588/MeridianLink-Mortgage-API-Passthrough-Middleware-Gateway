@@ -4,6 +4,29 @@ Append-only. Newest entries at the top. Never rewrite past entries; add a correc
 
 ---
 
+## 2026-11-06 — Correct the implied broker loan isolation claim
+
+**Finding.** The audit that accompanied the broker write-scope change exposed a second gap: tenant
+resolution fixes the persona, not the loan. `readLoan` and `enqueueWrite` never compare the loan to the
+caller's organization, and the deployed handler authenticates to MeridianLink with one shared credential.
+Any valid broker key can therefore request any loan ID the shared credential can reach. The README row that
+listed "other-org data" as never visible to a broker implied an isolation check that does not exist.
+
+**Changed**
+
+- `README.md`: the broker row no longer claims other-org isolation and notes fees are write-only for that
+  persona; the limitations section states the missing loan-to-organization check and the deployment
+  consequence (do not share one tenant's key with a competitor without adding it).
+- `llms.txt`: same warning for agents and integrators.
+- `todo.md`: records per-loan organization scoping as blocked on a loan-to-organization field in the MISMO
+  payload; no guessing at an organization tag.
+
+**Not changed.** No code path was altered for this entry. Enforcing scoping needs a real field that ties a
+loan to an organization, which the fixture and local fake do not model; a fabricated check would look like
+security without being one. `npm run verify` stays green at 50 tests and `template.yaml` at 50,916 bytes.
+
+---
+
 ## 2026-11-06 — Broker capability audit; unsupported loan writes now say so
 
 **Finding.** Broker keys (`TPO_BROKER`) read identity (name, email), property, terms, conditions, and lock

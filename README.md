@@ -113,7 +113,7 @@ Job statuses: `PENDING` → `RETRYING` → `COMPLETED` / `FAILED`. Fee arrays ar
 | Persona | Sees | Never sees |
 | --- | --- | --- |
 | `TITLE_VENDOR` | property address, loan terms, fees | borrower identity, SSN, credit score, conditions |
-| `TPO_BROKER` | property, terms, borrower name/email, conditions, lock status | SSN, credit score, other-org data |
+| `TPO_BROKER` | property, terms, borrower name/email, conditions, lock status | SSN, credit score, fees (write-only today) |
 | `AMC_VENDOR` | property (incl. legal description), appraisal contact, loan type/amount | borrower identity, fees, conditions |
 
 ### Broker workflow coverage (verified against the local handler)
@@ -212,6 +212,12 @@ Broker coverage is intentionally narrow today: reads include identity, property,
 lock status, and only fees are writable. A full 1003 submission, borrower document upload, and condition
 responses need real MISMO shapes and vendor endpoint confirmation; until then `PATCH /v1/loans/{id}`
 returns `501` rather than pretending to accept a loan update.
+
+**No per-loan organization scoping.** A tenant mapping fixes the persona, not which loans a key may touch:
+`GET /v1/loans/{id}` and the fee write accept any loan ID the gateway's shared MeridianLink credentials can
+reach. This design does not use MeridianLink-side user scoping, so a broker key is not restricted to its own
+organization's loans. Deploy only where the shared credential's visibility is acceptable, or add a
+loan-to-organization check before exposing the gateway to competing partners.
 
 ## Docs
 
