@@ -4,6 +4,29 @@ Append-only. Newest entries at the top. Never rewrite past entries; add a correc
 
 ---
 
+## 2026-11-06 — Purge the original dev-doc transcript
+
+**Why.** `chat-branch-of-encompass-api-middle-google-ai-studio-2026-11-06-1602.md` was the 87 KB build
+transcript that seeded this repository. Its requirements are implemented, tested, and restated in
+`README.md`, `AGENTS.md`, `llms.txt`, `CONTRIBUTING.md`, `index.html`, and this log, so the stale transcript
+only invited contributors to follow superseded instructions and inflated clones and Pages payloads.
+
+**Changed**
+
+- Deleted the transcript from the repository and removed its entry from the `README.md` docs list.
+- Recorded the removal in `todo.md`.
+- No source, test, template, or deployment file referenced the document; the only remaining mention is this
+  log's earlier entry that describes where the requirements came from.
+
+**Not done.** Git history is unchanged: the file still exists in the commits that introduced and updated it.
+Removing it from history requires a rewrite (`git filter-repo`) and a force-push, which is separate,
+destructive work that the maintainer must authorize.
+
+**Verification.** `npm run verify` passes with the full suite green and `template.yaml` still at 50,858
+bytes; a repository search for the filename returns only the historical entry in this log.
+
+---
+
 ## 2026-11-06 — GitHub Pages live; crawler and agent discovery files
 
 **Context.** The maintainer enabled GitHub Pages on `main` / root, so `index.html` now serves the project

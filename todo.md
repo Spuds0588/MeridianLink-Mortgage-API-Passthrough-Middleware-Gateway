@@ -57,6 +57,7 @@ Legend: `[ ]` pending · `[~]` in progress · `[x]` done · `[—]` deliberately
 - [x] Issue chooser config (`.github/ISSUE_TEMPLATE/config.yml`) links `CONTRIBUTING.md` and the support/issues surface
 - [x] PR template (`.github/pull_request_template.md`): actual verification, regression test, not-validated-against-tenant/deploy disclosure
 - [x] Static guards over forms, config, and template so the scaffolding cannot silently rot
+- [x] Purged the original dev-doc transcript; its requirements now live in `README.md`, `AGENTS.md`, `llms.txt`, and `CONTRIBUTING.md`
 - [—] Enable GitHub Discussions so the support contact can move off the issues list (maintainer action; verified 404 today)
 - [x] GitHub Pages enabled on `main` / root (2026-11-06); canonical page served at the project Pages URL
 - [x] `robots.txt` + `sitemap.xml` so crawlers find the canonical page and the agent-facing `llms.txt`
