@@ -16,6 +16,8 @@ const bugForm = read(".github/ISSUE_TEMPLATE/bug_report.yml");
 const improvementForm = read(".github/ISSUE_TEMPLATE/feature_improvement.yml");
 const issueConfig = read(".github/ISSUE_TEMPLATE/config.yml");
 const prTemplate = read(".github/pull_request_template.md");
+const robots = read("robots.txt");
+const sitemap = read("sitemap.xml");
 
 // Markdown wraps prose; match phrases in flowing text, not raw lines.
 const flat = (text) => text.replace(/\s+/g, " ");
@@ -55,6 +57,21 @@ test("landing page is self-contained, indexable and machine-readable", () => {
     JSON.parse(ld[1])["@graph"].map((node) => node["@type"]),
     ["WebSite", "SoftwareSourceCode", "FAQPage"]
   );
+});
+
+test("search and agent discovery files are published with the page", () => {
+  assert.match(page, /<link rel="sitemap" type="application\/xml" href="\.\/sitemap\.xml">/);
+  assert.match(robots, /^User-agent: \*$/m);
+  assert.match(robots, /^Allow: \/$/m);
+  assert.match(
+    robots,
+    /^Sitemap: https:\/\/spuds0588\.github\.io\/MeridianLink-Mortgage-API-Passthrough-Middleware-Gateway\/sitemap\.xml$/m
+  );
+  assert.match(
+    sitemap,
+    /<loc>https:\/\/spuds0588\.github\.io\/MeridianLink-Mortgage-API-Passthrough-Middleware-Gateway\/<\/loc>/
+  );
+  assert.doesNotMatch(sitemap, /<loc>http:\/\//, "sitemap URLs must be https");
 });
 
 test("landing page pushes issues, pull requests and contributor invitations", () => {

@@ -4,6 +4,31 @@ Append-only. Newest entries at the top. Never rewrite past entries; add a correc
 
 ---
 
+## 2026-11-06 — GitHub Pages live; crawler and agent discovery files
+
+**Context.** The maintainer enabled GitHub Pages on `main` / root, so `index.html` now serves the project
+publicly at `https://spuds0588.github.io/MeridianLink-Mortgage-API-Passthrough-Middleware-Gateway/`. The
+pre-deploy fetch confirmed the page, its canonical tag, JSON-LD, and `./llms.txt` all resolve (HTTP 200),
+while `robots.txt` and `sitemap.xml` returned 404.
+
+**Changed**
+
+- `robots.txt`: allow all crawlers and point at the canonical sitemap URL. The landing page and `llms.txt`
+  stay crawlable for both search engines and agent tooling.
+- `sitemap.xml`: single canonical URL with a last-modified date, so search engines index the Pages URL and
+  not a duplicate `index.html` path.
+- `index.html`: declares the sitemap in the document head.
+- `test/static.test.js`: one more guard for the sitemap declaration, the robots directives, and the sitemap
+  URL matching the canonical HTTPS URL.
+- `README.md` and `todo.md`: record the Pages enablement and the new files; the Pages toggle is no longer an
+  open maintainer action.
+
+**Verification before push.** `npm run verify`: 48 tests, 48 pass, 0 fail; `template.yaml` unchanged at
+50,858 bytes. `sitemap.xml` parses as XML with one `<loc>`. Post-push publication is checked by fetching the
+live `robots.txt`, `sitemap.xml`, page head, and `llms.txt` once Pages rebuilds.
+
+---
+
 ## 2026-11-06 — Guided issue and PR intake
 
 **Requirement.** The docs, README, and landing page told contributors to open issues and pull requests,

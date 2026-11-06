@@ -58,5 +58,6 @@ Legend: `[ ]` pending · `[~]` in progress · `[x]` done · `[—]` deliberately
 - [x] PR template (`.github/pull_request_template.md`): actual verification, regression test, not-validated-against-tenant/deploy disclosure
 - [x] Static guards over forms, config, and template so the scaffolding cannot silently rot
 - [—] Enable GitHub Discussions so the support contact can move off the issues list (maintainer action; verified 404 today)
-- [—] Enable GitHub Pages on `main` / root so the canonical landing-page URL resolves (maintainer action)
+- [x] GitHub Pages enabled on `main` / root (2026-11-06); canonical page served at the project Pages URL
+- [x] `robots.txt` + `sitemap.xml` so crawlers find the canonical page and the agent-facing `llms.txt`
 - [—] Contributor invitations and a designated triage rotation (maintainer action)

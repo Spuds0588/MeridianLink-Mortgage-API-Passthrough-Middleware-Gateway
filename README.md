@@ -193,6 +193,7 @@ no admin dashboard. Read responses are not cached server-side by design.
   community-maintenance duties).
 - `CONTRIBUTING.md` — issue and pull-request workflow, sanitization rules, contributor invitations.
 - `llms.txt` — compact machine-readable guide for LLMs and coding agents.
-- `index.html` — static project page served from GitHub Pages (enable Pages on `main` / root to publish it).
+- `index.html` — static project page served from GitHub Pages (`main` / root).
+- `robots.txt` and `sitemap.xml` — crawler permissions and the canonical page URL for search engines.
 - `todo.md` — task tracker. `history.md` — append-only decision log.
 - `chat-branch-of-encompass-api-middle-google-ai-studio-2026-11-06-1602.md` — original master dev doc.
