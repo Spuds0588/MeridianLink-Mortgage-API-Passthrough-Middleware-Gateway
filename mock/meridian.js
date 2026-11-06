@@ -12,7 +12,7 @@ const FIELDS = {
 };
 
 function createMockMeridian({ lockOnWrite = 0 } = {}) {
-  const state = { lockOnWrite, updates: [], requests: [] };
+  const state = { lockOnWrite, updates: [], requests: [], fieldCalls: 0, fieldsFailure: 0 };
 
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, "http://localhost");
@@ -33,6 +33,8 @@ function createMockMeridian({ lockOnWrite = 0 } = {}) {
     }
 
     if (loanMatch && req.method === "PATCH") {
+      const loanId = decodeURIComponent(loanMatch[1]);
+      if (loanId === "ML-404") return send(404, "application/json", JSON.stringify({ error: "Not found" }));
       const chunks = [];
       req.on("data", (chunk) => chunks.push(chunk));
       req.on("end", () => {
@@ -42,13 +44,15 @@ function createMockMeridian({ lockOnWrite = 0 } = {}) {
           return send(423, "application/json", JSON.stringify({ error: "Record locked by another user" }));
         }
         if (!body.includes("MISMOVersionID=\"3.4\"")) return send(400, "application/json", JSON.stringify({ error: "Invalid MISMO payload" }));
-        state.updates.push({ loanId: decodeURIComponent(loanMatch[1]), body });
+        state.updates.push({ loanId, body });
         send(200, "application/json", JSON.stringify({ status: "accepted" }));
       });
       return;
     }
 
     if (url.pathname === "/api/mismo/v3_4/fields" && req.method === "GET") {
+      state.fieldCalls += 1;
+      if (state.fieldsFailure) return send(state.fieldsFailure, "application/json", JSON.stringify({ error: "schema_unavailable" }));
       const ids = (url.searchParams.get("ids") || "").split(",").filter(Boolean);
       const payload = Object.fromEntries(ids.map((id) => [id, FIELDS[id] ?? { description: "Unknown field", type: "STRING" }]));
       return send(200, "application/json", JSON.stringify(payload));

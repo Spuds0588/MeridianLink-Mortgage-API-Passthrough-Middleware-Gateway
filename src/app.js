@@ -1,183 +1,293 @@
-/** Vendor-facing routes. Shaped like an API Gateway REST proxy event so handlers are deployment-portable. */
-const crypto = require("node:crypto");
+/** Vendor-facing routes. API-Gateway-shaped events; tenant identity comes only from apiKeyId. */
+const { randomUUID } = require("node:crypto");
 const { log } = require("./log");
+const { mask } = require("./mask");
 const { parseLoan } = require("./mismo");
-const { mask, ALLOWLISTS } = require("./mask");
+const { roleFor, safeEqual } = require("./roles");
 const { renderPortal } = require("./portal");
+
+const MAX_IDS = 100;
+const FIELD_ID = /^[A-Za-z0-9._-]+$/;
+const SCHEMA_TTL_MS = 5 * 60_000;
+const SCHEMA_CACHE_MAX = 200;
+const JOB_TTL_SECONDS = 30 * 24 * 60 * 60;
 
 const json = (statusCode, body, headers = {}) => ({
   statusCode,
-  headers: { "Content-Type": "application/json", ...headers },
+  headers: { "Content-Type": "application/json", "Cache-Control": "no-store", ...headers },
   body: JSON.stringify(body)
 });
-const html = (statusCode, body) => ({ statusCode, headers: { "Content-Type": "text/html; charset=utf-8" }, body });
+const error = (statusCode, message, extra = {}) => json(statusCode, { error: message, ...extra });
+const html = (statusCode, body) => ({
+  statusCode,
+  headers: {
+    "Content-Type": "text/html; charset=utf-8",
+    "Cache-Control": "no-store",
+    "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'",
+    "X-Frame-Options": "DENY"
+  },
+  body
+});
 
-function createApp({ store, queue, meridian }) {
-  // API Gateway injects the key id; local callers send the raw key header.
-  const tenantOf = (event) => {
-    const apiKeyId = event.requestContext?.identity?.apiKeyId;
-    const raw = event.headers?.["x-api-key"] ?? event.headers?.["X-Api-Key"];
-    return store.tenantFor(apiKeyId) ?? store.tenantFor(raw);
-  };
+const decode = (value) => {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+};
 
-  async function readLoan(event) {
-    const tenant = tenantOf(event);
-    if (!tenant) return json(403, { error: "Unauthorized API key" });
+const parseIds = (raw) => {
+  const ids = [...new Set(String(raw || "").split(",").map((id) => id.trim()).filter(Boolean))];
+  return ids.length && ids.length <= MAX_IDS && ids.every((id) => FIELD_ID.test(id)) ? ids : null;
+};
 
-    const loanId = event.pathParameters?.id;
-    if (!loanId) return json(400, { error: "Missing loanId path parameter" });
+const validFees = (fees) =>
+  Array.isArray(fees) &&
+  fees.length > 0 &&
+  fees.length <= MAX_IDS &&
+  fees.every(
+    (fee) =>
+      typeof fee?.feeType === "string" &&
+      fee.feeType.trim().length > 0 &&
+      fee.feeType.length <= 100 &&
+      Number.isFinite(fee.amount) &&
+      fee.amount >= 0 &&
+      (fee.paidTo === undefined || (typeof fee.paidTo === "string" && fee.paidTo.length <= 200))
+  );
+
+function createApp({ store, meridian, env = process.env, now = () => Date.now() }) {
+  if (!store) throw new Error("createApp requires a store");
+
+  // Definitions are public-ish but still tenant-scoped: cache per persona + field set only.
+  const schemaCache = new Map();
+  const tenantFor = async (apiKeyId) => (apiKeyId ? (await store.getTenant(apiKeyId)) || null : null);
+
+  async function fields(event, apiKeyId) {
+    const tenant = await tenantFor(apiKeyId);
+    if (!tenant) return error(403, "Unauthorized tenant mapping");
+
+    const ids = parseIds(event.queryStringParameters?.ids);
+    if (!ids) return error(400, "ids is required (comma-separated, max 100)");
+
+    const cacheKey = `${tenant.persona}|${ids.join(",")}`;
+    const cached = schemaCache.get(cacheKey);
+    if (cached && cached.expiresAt > now()) {
+      log("INFO", "FIELD_SCHEMA_CACHE_HIT", { count: ids.length });
+      return json(200, cached.body, { "Cache-Control": "private, max-age=300" });
+    }
+
+    let upstream;
+    try {
+      upstream = await meridian.getFields(ids);
+    } catch (err) {
+      log("ERROR", "MERIDIANLINK_UNREACHABLE", { path: "/v1/fields", message: err.message });
+      return error(502, "MeridianLink field schema unavailable");
+    }
+
+    if (upstream.status === 401 || upstream.status === 403) {
+      log("ERROR", "MERIDIANLINK_REJECTED_CREDENTIALS", { path: "/v1/fields", status: upstream.status });
+      return error(502, "MeridianLink rejected gateway credentials");
+    }
+    if (upstream.status !== 200) {
+      log("ERROR", "FIELD_SCHEMA_FAILED", { status: upstream.status });
+      return error(502, "MeridianLink field schema unavailable");
+    }
+
+    let definitions;
+    try {
+      definitions = JSON.parse(upstream.body);
+    } catch {
+      return error(502, "Invalid MeridianLink response");
+    }
+    if (!definitions || typeof definitions !== "object" || Object.keys(definitions).length === 0) {
+      return error(404, "No field definitions found");
+    }
+
+    schemaCache.set(cacheKey, { body: definitions, expiresAt: now() + SCHEMA_TTL_MS });
+    if (schemaCache.size > SCHEMA_CACHE_MAX) schemaCache.clear();
+    log("INFO", "FIELD_SCHEMA_LOOKUP", { count: Object.keys(definitions).length, requested: ids.length });
+    return json(200, definitions, { "Cache-Control": "private, max-age=300" });
+  }
+
+  async function readLoan(event, apiKeyId, loanId) {
+    const tenant = await tenantFor(apiKeyId);
+    if (!tenant) return error(403, "Unauthorized tenant mapping");
 
     let upstream;
     try {
       upstream = await meridian.getLoan(loanId);
     } catch (err) {
-      log("ERROR", "MERIDIANLINK_UNREACHABLE", { loanId, message: err.message });
-      return json(502, { error: "Upstream MeridianLink unreachable" });
+      log("ERROR", "MERIDIANLINK_READ_FAILED", { loanId, message: err.message });
+      return error(err.name === "TimeoutError" ? 504 : 502, "MeridianLink request failed");
     }
-    log("INFO", "MERIDIANLINK_RESPONSE_RECEIVED", { loanId, status: upstream.status });
-    if (upstream.status === 404) return json(404, { error: "Loan not found" });
-    if (upstream.status === 423) return json(423, { error: "Loan record locked upstream, retry shortly" });
-    if (upstream.status >= 300) return json(502, { error: "Upstream MeridianLink error", status: upstream.status });
 
-    const masked = mask(parseLoan(upstream.body), tenant.role);
-    if (!masked) return json(403, { error: `Role ${tenant.role} has no schema allowlist` });
-    log("INFO", "SCHEMA_MASKING_APPLIED", { loanId, role: tenant.role });
+    log("INFO", "MERIDIANLINK_READ_COMPLETE", { loanId, status: upstream.status });
+    if (upstream.status === 423) return error(423, "Loan is locked by MeridianLink", { code: "FILE_LOCKED" });
+    if (upstream.status === 404) return error(404, "Loan not found");
+    if (upstream.status === 429) return error(429, "MeridianLink rate limit reached");
+    if (upstream.status === 401 || upstream.status === 403) return error(502, "MeridianLink rejected gateway credentials");
+    if (upstream.status >= 500) return error(502, "MeridianLink unavailable");
+    if (upstream.status >= 300) return error(400, "MeridianLink rejected the request", { upstreamStatus: upstream.status });
+
+    const masked = mask(parseLoan(upstream.body), tenant.persona);
+    if (!masked) return error(403, `Persona ${tenant.persona} has no schema allowlist`);
+    log("INFO", "SCHEMA_MASKING_APPLIED", { loanId, persona: tenant.persona });
     return json(200, masked, { "Cache-Control": "private, max-age=15" });
   }
 
-  function enqueueWrite(event) {
-    const tenant = tenantOf(event);
-    if (!tenant) return json(403, { error: "Unauthorized API key" });
+  async function enqueueWrite(event, apiKeyId, loanId) {
+    const tenant = await tenantFor(apiKeyId);
+    if (!tenant) return error(403, "Unauthorized tenant mapping");
 
-    const loanId = event.pathParameters?.id;
-    if (!loanId) return json(400, { error: "Missing loanId path parameter" });
-
-    let body;
+    let payload;
     try {
-      body = JSON.parse(event.body || "{}");
+      payload = JSON.parse(event.body || "");
     } catch {
-      return json(400, { error: "Invalid JSON" });
+      return error(400, "Invalid JSON body");
+    }
+    if (!validFees(payload?.fees)) {
+      return error(400, "Body must contain a non-empty fees array (max 100) of { feeType, amount }");
     }
 
-    const fees = body.fees;
-    if (!Array.isArray(fees) || fees.length === 0 || fees.length > 100) {
-      return json(400, { error: "fees must be a non-empty array of at most 100 items" });
-    }
-    const invalid = fees.some((fee) => typeof fee?.feeType !== "string" || !fee.feeType.trim() || !Number.isFinite(fee.amount) || fee.amount < 0);
-    if (invalid) return json(400, { error: "Each fee requires feeType (string) and amount (number >= 0)" });
-
-    const job = store.saveJob({
-      jobId: `job-${crypto.randomUUID()}`,
+    const createdAt = new Date(now()).toISOString();
+    const job = {
+      jobId: `job_${randomUUID()}`,
       loanId,
+      apiKeyId,
       tenantName: tenant.tenantName,
+      persona: tenant.persona,
       status: "PENDING",
       attempts: 0,
-      updatedAt: new Date().toISOString(),
       error: null,
-      fees
-    });
-    queue.enqueue(job);
-    log("INFO", "WRITE_JOB_ENQUEUED", { jobId: job.jobId, loanId, tenantName: tenant.tenantName, feeCount: fees.length });
+      createdAt,
+      updatedAt: createdAt,
+      ttl: Math.floor(now() / 1000) + JOB_TTL_SECONDS
+    };
+    await store.putJob(job);
 
+    try {
+      await store.enqueueWrite({ jobId: job.jobId, loanId, fees: payload.fees });
+    } catch (err) {
+      await store.putJob({ ...job, status: "FAILED", error: "Queue unavailable", updatedAt: new Date(now()).toISOString() });
+      log("ERROR", "WRITE_ENQUEUE_FAILED", { jobId: job.jobId, loanId, message: err.message });
+      return error(503, "Write queue unavailable");
+    }
+
+    log("INFO", "WRITE_ENQUEUED", { jobId: job.jobId, loanId, tenantName: tenant.tenantName, feeCount: payload.fees.length });
     return json(202, { status: "ACCEPTED", jobId: job.jobId, loanId, statusUrl: `/v1/jobs/${job.jobId}` });
   }
 
-  function jobStatus(event) {
-    const tenant = tenantOf(event);
-    if (!tenant) return json(403, { error: "Unauthorized API key" });
+  async function jobStatus(apiKeyId, jobId) {
+    const tenant = await tenantFor(apiKeyId);
+    if (!tenant) return error(403, "Unauthorized tenant mapping");
 
-    const job = store.getJob(event.pathParameters?.id);
-    if (!job) return json(404, { error: "Job not found" });
-    if (job.tenantName !== tenant.tenantName) return json(403, { error: "Job belongs to another tenant" });
-
-    const { fees, ...view } = job;
-    return json(200, view);
-  }
-
-  async function fields(event) {
-    const tenant = tenantOf(event);
-    if (!tenant) return json(403, { error: "Unauthorized API key" });
-
-    const ids = (event.queryStringParameters?.ids || "").split(",").map((id) => id.trim()).filter(Boolean);
-    if (!ids.length) return json(400, { error: "ids query parameter required, e.g. ?ids=11,646" });
-
-    try {
-      const upstream = await meridian.getFields(ids);
-      log("INFO", "FIELD_SCHEMA_LOOKUP", { count: ids.length, status: upstream.status });
-      return upstream.status === 200 ? json(200, JSON.parse(upstream.body)) : json(502, { error: "Upstream MeridianLink error", status: upstream.status });
-    } catch (err) {
-      log("ERROR", "MERIDIANLINK_UNREACHABLE", { action: "FIELDS", message: err.message });
-      return json(502, { error: "Upstream MeridianLink unreachable" });
-    }
-  }
-
-  function provision(event) {
-    let body;
-    try {
-      body = JSON.parse(event.body || "{}");
-    } catch {
-      return json(400, { error: "Invalid JSON" });
-    }
-
-    const tenantName = String(body.tenantName || "").trim();
-    const role = String(body.role || "").trim().toUpperCase();
-    if (!tenantName) return json(400, { error: "tenantName is required" });
-    if (!ALLOWLISTS[role]) return json(400, { error: `role must be one of ${Object.keys(ALLOWLISTS).join(", ")}` });
-
-    const tenant = store.addTenant({
-      apiKeyId: `key_${crypto.randomBytes(8).toString("hex")}`,
-      apiKey: `mlg_${crypto.randomBytes(24).toString("base64url")}`,
-      tenantName,
-      role,
-      status: "ACTIVE",
-      createdAt: new Date().toISOString()
+    const job = await store.getJob(jobId);
+    if (!job || job.apiKeyId !== apiKeyId) return error(404, "Job not found");
+    return json(200, {
+      jobId: job.jobId,
+      loanId: job.loanId,
+      status: job.status,
+      attempts: job.attempts,
+      createdAt: job.createdAt,
+      updatedAt: job.updatedAt,
+      error: job.error || null
     });
-    log("INFO", "PARTNER_PROVISIONED", { tenantName, role, apiKeyId: tenant.apiKeyId });
+  }
+
+  async function provision(event, requestId) {
+    let payload;
+    try {
+      payload = JSON.parse(event.body || "");
+    } catch {
+      return error(400, "Invalid JSON body");
+    }
+
+    const role = String(payload?.role || "").trim().toLowerCase();
+    const config = roleFor(env, role);
+    if (!config || !safeEqual(String(payload?.code || ""), config.code)) {
+      log("WARN", "PORTAL_INVITE_REJECTED", { requestId, role: role || "unknown" });
+      return error(403, "Invalid or expired invite link");
+    }
+
+    const tenantName = String(payload.tenantName || "").trim();
+    const email = String(payload.email || "").trim();
+    if (!tenantName || tenantName.length > 100) return error(400, "tenantName is required (max 100 chars)");
+    if (!email || email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) return error(400, "A valid email is required");
+
+    const key = await store.createApiKey({ tenantName });
+    await store.putTenant({
+      apiKeyId: key.id,
+      tenantName,
+      email,
+      role,
+      persona: config.persona,
+      status: "ACTIVE",
+      createdAt: new Date(now()).toISOString()
+    });
+    log("INFO", "TENANT_PROVISIONED", { tenantName, role, persona: config.persona, apiKeyId: key.id });
 
     return json(200, {
       message: "Tenant provisioned successfully",
-      apiKey: tenant.apiKey,
+      apiKey: key.value,
       tenantName,
+      email,
       role,
-      example: [
-        `curl "$GATEWAY/v1/loans/ML-998822" -H "x-api-key: ${tenant.apiKey}"`,
-        `curl -X PATCH "$GATEWAY/v1/loans/ML-998822/fees" -H "x-api-key: ${tenant.apiKey}" -H "Content-Type: application/json" \\`,
-        `  -d '{"fees":[{"feeType":"TitleLenderCoveragePremium","amount":1350}]}'`
-      ].join("\n")
+      persona: config.persona
     });
   }
 
-  async function handle(event) {
-    const method = (event.httpMethod || event.requestContext?.http?.method || "GET").toUpperCase();
+  async function handle(event = {}) {
+    const method = String(event.httpMethod || event.requestContext?.http?.method || "GET").toUpperCase();
     const path = event.path || event.rawPath || "/";
-    log("INFO", "REQUEST_RECEIVED", { method, path });
+    const requestId = event.requestContext?.requestId;
+    const apiKeyId = event.requestContext?.identity?.apiKeyId;
+    const started = now();
 
+    log("INFO", "REQUEST_RECEIVED", { requestId, method, path });
     try {
-      if (path === "/health" && method === "GET") return json(200, { status: "ok", system: "MeridianLinkGateway" });
-      if (path === "/portal") return method === "POST" ? provision(event) : html(200, renderPortal());
+      if (method === "GET" && path === "/health") return json(200, { status: "ok", system: "MeridianLinkGateway" });
 
-      const withLoanId = (match, next) => {
-        event.pathParameters = { ...event.pathParameters, id: decodeURIComponent(match[1]) };
-        return next(event);
-      };
+      if (path === "/portal") {
+        if (method === "POST") return await provision(event, requestId);
+        if (method !== "GET") return error(405, "Method not allowed");
+        const role = String(event.queryStringParameters?.role || "").trim().toLowerCase();
+        const code = String(event.queryStringParameters?.code || "");
+        if (!role && !code) return html(200, renderPortal());
+        const config = roleFor(env, role);
+        if (!config || !safeEqual(code, config.code)) {
+          log("WARN", "PORTAL_INVITE_REJECTED", { requestId, role: role || "unknown" });
+          return html(403, renderPortal({ error: "This invite link is invalid or has expired." }));
+        }
+        return html(200, renderPortal({ role: config }));
+      }
+
+      if (path === "/v1/fields") {
+        return method === "GET" ? await fields(event, apiKeyId) : error(405, "Method not allowed");
+      }
 
       let match;
       if ((match = /^\/v1\/loans\/([^/]+)\/fees$/.exec(path))) {
-        return method === "PATCH" ? withLoanId(match, enqueueWrite) : json(405, { error: "Method not allowed" });
+        if (method !== "PATCH") return error(405, "Method not allowed");
+        return await enqueueWrite(event, apiKeyId, decode(match[1]));
       }
       if ((match = /^\/v1\/loans\/([^/]+)$/.exec(path))) {
-        return method === "GET" ? withLoanId(match, readLoan) : method === "PATCH" ? withLoanId(match, enqueueWrite) : json(405, { error: "Method not allowed" });
+        const loanId = decode(match[1]);
+        if (method === "GET") return await readLoan(event, apiKeyId, loanId);
+        if (method === "PATCH") return await enqueueWrite(event, apiKeyId, loanId);
+        return error(405, "Method not allowed");
       }
       if ((match = /^\/v1\/jobs\/([^/]+)$/.exec(path))) {
-        return method === "GET" ? withLoanId(match, jobStatus) : json(405, { error: "Method not allowed" });
+        if (method !== "GET") return error(405, "Method not allowed");
+        return await jobStatus(apiKeyId, decode(match[1]));
       }
-      if (path === "/v1/fields") {
-        return method === "GET" ? await fields(event) : json(405, { error: "Method not allowed" });
-      }
-      return json(404, { error: "Not found" });
+
+      return error(404, "Not found");
     } catch (err) {
-      log("ERROR", "REQUEST_EXCEPTION", { method, path, message: err.message });
-      return json(500, { error: "Internal Gateway Error" });
+      log("ERROR", "HANDLER_EXCEPTION", { requestId, method, path, message: err.message, stack: err.stack });
+      return error(500, "Internal gateway error");
+    } finally {
+      log("INFO", "REQUEST_COMPLETE", { requestId, method, path, durationMs: now() - started });
     }
   }
 

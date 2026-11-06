@@ -2,12 +2,13 @@
   "name": "meridianlink-mortgage-gateway",
   "version": "0.1.0",
   "private": true,
-  "description": "Serverless-style MeridianLink Mortgage API passthrough & middleware gateway: MISMO 3.4 XML to JSON, persona schema masking, FIFO write pipeline.",
-  "main": "src/server.js",
+  "description": "Serverless-style MeridianLink Mortgage API passthrough & middleware gateway: MISMO 3.4 XML to JSON, persona schema masking, invite-scoped keys, FIFO write pipeline.",
+  "main": "src/lambda.js",
   "scripts": {
-    "start": "node src/server.js",
-    "dev": "node scripts/dev.js",
-    "test": "node --test test/"
+    "build": "node scripts/build.js",
+    "test": "node --test test/",
+    "verify": "node scripts/build.js --check && node --test test/",
+    "dev": "node dev/server.js"
   },
   "engines": {
     "node": ">=20"

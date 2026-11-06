@@ -1,58 +1,90 @@
 # MeridianLink Mortgage API Passthrough & Middleware Gateway
 
-An open-source, zero-vendor-footprint middleware gateway for MeridianLink Mortgage. It turns verbose
-MISMO 3.4 XML into clean JSON REST endpoints, enforces persona-based schema masking so borrower NPI
-never reaches a partner who should not see it, and absorbs write contention through a FIFO queue.
+An open-source middleware gateway for MeridianLink Mortgage. It turns verbose MISMO 3.4 XML into
+clean JSON REST endpoints, enforces persona-based schema masking so borrower NPI never reaches a
+partner who should not see it, and absorbs write contention through an SQS FIFO queue with retries.
+The whole stack deploys into the lender's AWS account from a single file.
 
-Deploy target: the lender's own AWS account (API Gateway + Lambda + DynamoDB + SQS FIFO + Secrets
-Manager, egress through a NAT gateway with a static Elastic IP for MeridianLink's firewall allowlist).
-**This repository currently ships the runtime MVP with local adapters** — see [Status](#status).
+Sister project: [Encompass API Passthrough Middleware Gateway](https://github.com/Spuds0588/Encompass-API-Passhrough-Middleware-Gateway-).
+This repository follows the same runtime and deployment patterns where they fit MeridianLink.
 
-## Quickstart (local, no AWS, no MeridianLink access)
+## Deploy (AWS CloudShell, ~3 minutes)
 
-Requires Node.js 20+. There are no dependencies to install.
-
-```bash
-npm run dev      # mock MeridianLink on :8081 + gateway on :8080
-npm test         # node:test suite (in-memory, leaves no state)
+```shell
+bash <(curl -sSL https://raw.githubusercontent.com/Spuds0588/MeridianLink-Mortgage-API-Passthrough-Middleware-Gateway/main/deploy.sh)
 ```
 
-Open <http://localhost:8080/portal>, provision a partner, then:
+The script verifies your AWS session, asks for the MeridianLink base URL, username, and password,
+generates three role invite codes, fetches the committed template, and deploys
+`MeridianLink-Mortgage-Gateway` with `CAPABILITY_IAM`. It prints:
 
-```bash
-# 1. Read a loan (masked for the persona you picked)
-curl "http://localhost:8080/v1/loans/ML-998822" -H "x-api-key: mlg_..."
+- `GatewayUrl` — base URL for vendor calls
+- `AdminPortalUrl` — the invite portal
+- `HealthUrl`, `FieldsUrl`
+- `StaticEgressIp` — whitelist this with MeridianLink support
+- three ready-to-share role links, e.g. `...?role=title&code=...`
 
-# 2. Write title fees — queued, returns 202 + jobId
-curl -X PATCH "http://localhost:8080/v1/loans/ML-998822/fees" \
-  -H "x-api-key: mlg_..." -H "Content-Type: application/json" \
-  -d '{"fees":[{"feeType":"TitleLenderCoveragePremium","amount":1350,"paidTo":"First American Title"}]}'
+Environment overrides: `STACK_NAME`, `AWS_REGION`, `MERIDIAN_BASE_URL`, `MERIDIAN_USERNAME`,
+`MERIDIAN_PASSWORD`, `TITLE_INVITE_CODE`, `BROKER_INVITE_CODE`, `APPRAISAL_INVITE_CODE`, `TEMPLATE_URL`.
 
-# 3. Poll the job
-curl "http://localhost:8080/v1/jobs/job-..." -H "x-api-key: mlg_..."
+Prefer the console? Upload `template.yaml` directly in CloudFormation and fill in the same parameters.
+It stays under the 51,200-byte direct-upload limit.
 
-# 4. Field dictionary (proxied from MeridianLink, no local mapping table)
-curl "http://localhost:8080/v1/fields?ids=11,646,CX.TITLE.STATUS" -H "x-api-key: mlg_..."
+### Smoke test after deploy
+
+```shell
+curl -s "$HEALTH_URL"
+curl -s "$PORTAL_URL?role=title&code=$TITLE_INVITE_CODE"
+curl -s -X POST "$PORTAL_URL" -H "content-type: application/json" \
+  -d "{\"role\":\"title\",\"code\":\"$TITLE_INVITE_CODE\",\"tenantName\":\"Acme Title\",\"email\":\"dev@acme.test\"}"
+# use the returned apiKey:
+curl -s "$GATEWAY_URL/v1/loans/ML-998822" -H "x-api-key: $KEY"
+curl -s "$GATEWAY_URL/v1/fields?ids=11,646,CX.TITLE.STATUS" -H "x-api-key: $KEY"
+curl -s -X PATCH "$GATEWAY_URL/v1/loans/ML-998822/fees" -H "x-api-key: $KEY" \
+  -H "content-type: application/json" -d '{"fees":[{"feeType":"TitleLenderCoveragePremium","amount":1350}]}'
+curl -s "$GATEWAY_URL/v1/jobs/$JOB_ID" -H "x-api-key: $KEY"
 ```
 
-Mock loan ids: `ML-998822` (normal), `ML-LOCKED-1` (upstream `423`), `ML-404` (missing).
+## Features
+
+- **MISMO 3.4 XML → JSON** — reads return `loanId`, `milestone`, `property`, `terms`, `fees`, and
+  persona-permitted extras. No vendor-side XML parsing.
+- **Persona schema masking** — deny-by-default allowlists per role; NPI is pruned before the response
+  leaves the gateway. Unknown personas fail closed.
+- **Async writes** — `PATCH /v1/loans/{id}/fees` validates and enqueues to SQS FIFO (grouped by loan),
+  returns `202` + job ID, retries MeridianLink record locks with backoff, and dead-letters after 5 attempts.
+- **Role-scoped self-serve onboarding** — the lender shares a title, broker, or appraisal invite link;
+  the vendor enters a company name and developer email; the gateway locks the key to that role's persona
+  server-side. No admin token and no per-vendor admin work.
+- **Field discovery** — `GET /v1/fields?ids=…` proxies definitions from MeridianLink and caches them per
+  persona for 5 minutes. The portal publishes a common-path cheat sheet.
+- **One-file deployment** — one CloudFormation template under the direct-upload limit with the Lambda
+  bundle inlined; no S3 bucket, no zip, no build step in AWS.
+- **Static egress IP** — the template provisions a VPC, NAT gateway, and Elastic IP so MeridianLink can
+  allowlist a single address.
 
 ## API
 
-| Method | Path | Behavior |
+| Method | Path | Auth | Response |
+| --- | --- | --- | --- |
+| `GET` | `/health` | none | `{ "status": "ok", "system": "MeridianLinkGateway" }` |
+| `GET` | `/portal` | none | invite landing page + field cheat sheet |
+| `GET` | `/portal?role=title&code=…` | invite code | persona-locked form |
+| `POST` | `/portal` body `{ role, code, tenantName, email }` | invite code | `{ apiKey, tenantName, email, role, persona }` |
+| `GET` | `/v1/fields?ids=11,646,CX.TITLE.STATUS` | `x-api-key` | `{ "11": { description, type }, … }` |
+| `GET` | `/v1/loans/{id}` | `x-api-key` | masked loan JSON |
+| `PATCH` | `/v1/loans/{id}/fees` body `{ "fees": [{ "feeType": "…", "amount": 1350 }] }` | `x-api-key` | `202 { status, jobId, loanId, statusUrl }` |
+| `GET` | `/v1/jobs/{id}` | `x-api-key` | `{ jobId, loanId, status, attempts, createdAt, updatedAt, error }` |
+
+Job statuses: `PENDING` → `RETRYING` → `COMPLETED` / `FAILED`. Fee arrays are capped at 100 items.
+
+### Roles and personas
+
+| Role | Persona (allowlist) | Invite parameter |
 | --- | --- | --- |
-| `GET` | `/v1/loans/{id}` | Synchronous read → MISMO XML parsed to JSON, persona-masked, `Cache-Control: private, max-age=15` |
-| `PATCH` | `/v1/loans/{id}/fees` (also `/v1/loans/{id}`) | Async fee write → `202 ACCEPTED` + `jobId` + `statusUrl` |
-| `GET` | `/v1/jobs/{jobId}` | `PENDING` \| `RETRYING` \| `COMPLETED` \| `FAILED`, attempt count, last error |
-| `GET` | `/v1/fields?ids=11,646` | Field descriptions/types straight from the source of truth |
-| `GET`/`POST` | `/portal` | SSR admin portal; `POST {tenantName, role}` issues a scoped key |
-| `GET` | `/health` | Liveness |
-
-All `/v1` routes require the `x-api-key` header (API Gateway injects `apiKeyId` when deployed).
-
-### Personas and masking
-
-Deny by default. Any JSON path not in the persona allowlist is pruned.
+| `title` | `TITLE_VENDOR` | `TitleInviteCode` |
+| `broker` | `TPO_BROKER` | `BrokerInviteCode` |
+| `appraisal` | `AMC_VENDOR` | `AppraisalInviteCode` |
 
 | Persona | Sees | Never sees |
 | --- | --- | --- |
@@ -60,45 +92,80 @@ Deny by default. Any JSON path not in the persona allowlist is pruned.
 | `TPO_BROKER` | property, terms, borrower name/email, conditions, lock status | SSN, credit score, other-org data |
 | `AMC_VENDOR` | property (incl. legal description), appraisal contact, loan type/amount | borrower identity, fees, conditions |
 
-Unknown roles fail closed with `403`.
-
-## Architecture (local MVP)
+## Architecture
 
 ```
-[partner] --x-api-key--> src/server.js (API-Gateway-shaped events)
-                             └─ src/app.js routes
-                                 ├─ GET  /v1/loans/{id}   → src/meridian.js → src/mismo.js parseLoan → src/mask.js → JSON
-                                 ├─ PATCH .../fees        → src/queue.js (FIFO per loanId, concurrency 10, backoff) → src/meridian.js
-                                 ├─ GET  /v1/jobs/{id}    → src/store.js (tenant ownership enforced)
-                                 └─ GET  /v1/fields       → src/meridian.js passthrough
+Vendor ──invite link──► GET  /portal?role=title&code=… → persona-locked form
+Vendor ──x-api-key────► API Gateway (usage plan)
+                         ├── POST /portal            → invite → API key + tenant mapping
+                         ├── GET  /health            → open liveness
+                         ├── GET  /v1/fields         → schema proxy (5-min per-persona cache)
+                         ├── GET  /v1/loans/{id}     → Masked MISMO→JSON read
+                         ├── PATCH /v1/loans/{id}/fees → SQS FIFO enqueue → 202 + job
+                         └── GET  /v1/jobs/{id}      → job status (owner only)
+                                                        │
+                              SQS FIFO (group = loan) ──┘─► Lambda worker ──► MeridianLink
+                                                              (5 attempts, then DLQ)
+                              NAT gateway + Elastic IP = static egress for the vendor firewall
 ```
 
-AWS primitives map to adapters with the same contract: DynamoDB → `src/store.js`, SQS FIFO + worker
-Lambda → `src/queue.js`, Secrets Manager → env vars in `src/meridian.js`, API Gateway → `src/server.js`.
-`mock/meridian.js` stands in for the vendor API.
+Storage: DynamoDB tenants + jobs (TTL) · Secrets Manager (API password) · API Gateway key store.
+No loan documents are persisted; only the in-flight fee payload travels in the SQS message.
 
-### Configuration
+## Local development
 
-| Variable | Default | Purpose |
-| --- | --- | --- |
-| `PORT` | `8080` | Gateway listener |
-| `MERIDIAN_BASE_URL` | `http://127.0.0.1:8081` | MeridianLink base URL |
-| `MERIDIAN_USERNAME` / `MERIDIAN_PASSWORD` | `demo` / `demo` | Basic auth (Secrets Manager in AWS) |
-| `STORE_FILE` | `data/store.json` | Tenant/job persistence; unset or empty for in-memory |
-| `MOCK_PORT` | `8081` | Mock MeridianLink port (`npm run dev`) |
+Requires Node.js 20+. There are no dependencies to install.
 
-## Status
+```shell
+npm run dev
+# Gateway:   http://127.0.0.1:3000
+# Portal:    http://127.0.0.1:3000/portal?role=title&code=local-title-invite-0123456789
+# Broker:    …?role=broker&code=local-broker-invite-0123456789
+# Appraisal: …?role=appraisal&code=local-appraisal-invite-0123456789
+npm test          # node:test suite (in-memory, no state)
+npm run build     # regenerate dist/gateway.js + template.yaml
+npm run verify    # build --check + tests
+```
 
-Implemented and tested locally: MISMO translation, persona masking, synchronous read, async FIFO write
-with lock-contention retries, job status, field dictionary, SSR portal, HTTP runtime.
+The local stack runs the real handler against `mock/meridian.js` and an in-memory AWS stand-in. Mock
+loans: `ML-998822` (normal), `ML-LOCKED-1` (always `423`), `ML-404` (missing).
 
-Not implemented / not verifiable here: CloudFormation `template.yaml`, VPC + NAT + static Elastic IP,
-`deploy.sh`, and any live MeridianLink or AWS call. `todo.md` tracks those as deferred, and `history.md`
-records why. The portal is intentionally unauthenticated in this MVP — put it behind your IdP or an
-invite-link flow before exposing it; the API keys it issues are only as strong as the masking matrix.
+## Repository layout
+
+```
+src/lambda.js         deployed Lambda (HTTP + SQS)
+src/app.js            routes, invites, reads, writes, job status, schema cache
+src/mismo.js          MISMO 3.4 XML ↔ vendor JSON
+src/mask.js           persona allowlists
+src/roles.js          role → persona + invite env var
+src/portal.js         invite portal + cheat sheet
+src/writes.js         write delivery and retry classification
+src/aws-store.js      DynamoDB / SQS / Secrets Manager / API Gateway adapters
+src/server.js         local HTTP adapter
+dev/                  fake upstream, memory store, drain runner
+infra/template.yaml   CloudFormation source (//__GATEWAY_CODE__ placeholder)
+template.yaml         generated deployable template (committed)
+scripts/build.js      bundle + inline + size guard + --check
+deploy.sh             one-line CloudShell installer
+test/                 node:test unit, e2e, bundle and template guards
+```
+
+## Status and limitations
+
+Implemented and tested locally: MISMO translation, persona masking, invite onboarding, schema proxy
+and cache, synchronous reads, async FIFO writes with lock retries, job ownership, HTTP runtime, the
+single-file template, and the exact inline bundle the template deploys (executed in tests).
+
+**Not deployed to AWS from this environment** (no AWS account or MeridianLink access). The template is
+structurally tested and the embedded handler is executed locally, but real resource behavior,
+MeridianLink payload shapes, and the egress IP allowlist remain unverified. See `history.md`.
+
+Other known limits: invite codes are global per role (rotate via stack parameters; no single-use or
+revocation UI), one shared usage plan/quota for all tenants, no CORS (server-to-server expected), and
+no admin dashboard. Read responses are not cached server-side by design.
 
 ## Docs
 
-- `AGENTS.md` — operating manual (YAGNI, one-line preference, dev-env hygiene).
+- `AGENTS.md` — operating manual (YAGNI, one-line preference, security invariants, dev-env hygiene).
 - `todo.md` — task tracker. `history.md` — append-only decision log.
 - `chat-branch-of-encompass-api-middle-google-ai-studio-2026-11-06-1602.md` — original master dev doc.

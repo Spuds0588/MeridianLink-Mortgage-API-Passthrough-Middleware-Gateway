@@ -4,6 +4,50 @@ Append-only. Newest entries at the top. Never rewrite past entries; add a correc
 
 ---
 
+## 2026-11-06 — Sister-project parity (Encompass gateway)
+
+Reviewed `https://github.com/Spuds0588/Encompass-API-Passhrough-Middleware-Gateway-` (15 commits) and
+adopted the patterns that fit MeridianLink. This entry **supersedes** the earlier MVP decisions on the
+open portal, plaintext-key storage, and the missing deployment path; it does not erase them.
+
+**Adopted**
+
+- **Role invite codes.** `title`/`broker`/`appraisal` map server-side to a persona allowlist; the invite
+  code is compared with `timingSafeEqual` and provisioning fails closed if a role or code is unset. The
+  portal is invite-locked (`GET /portal?role=…&code=…`) instead of open. Replaces "portal unauthenticated
+  by design".
+- **No plaintext keys.** Only `apiKeyId` is persisted; the portal returns the key once and the dev store
+  keeps a key→id map in memory only. Matches API Gateway's model in AWS.
+- **Hardened portal.** Inline CSS (Tailwind CDN dropped), strict CSP, `frame-ancestors 'none'`,
+  `X-Frame-Options: DENY`, developer email captured, cheat sheet of JSON response paths.
+- **Schema cache.** `/v1/fields` results cached per persona + field set for 5 minutes, `private, max-age=300`.
+- **SQS-shaped writes.** `src/writes.js` classifies retryable vs permanent failures; the SQS event source
+  redelivers retryable ones up to 5 times before the DLQ, and `dev/local-runner.js` simulates redelivery
+  locally. Jobs store no fee payload; fees travel in the queue message.
+- **One-file deployment.** `scripts/build.js` bundles `src/` into a single CJS file, inlines it into
+  `infra/template.yaml`, and enforces CloudFormation's 51,200-byte direct-upload limit; `template.yaml` is
+  generated and committed. Template guards plus a test that extracts and executes the inline bundle.
+- **Distribution.** `deploy.sh` (CloudShell, generates invite codes, prints invite links and the egress IP)
+  and `.github/workflows/ci.yml` (tests + `build --check` on Node 20 and 24).
+- **Async storage interface** injected as `getTenant`/`putTenant`/`getJob`/`putJob`/`enqueueWrite`/
+  `createApiKey`/`getSecret`, with AWS and in-memory implementations.
+
+**Adapted or rejected**
+
+- **Persona token impersonation** is N/A for MeridianLink (no subject-user token exchange). The gateway
+  mask is the persona boundary; the role table selects it server-side.
+- **30-second read cache** rejected: the Meridian design forbids a local copy of loan data. Reads keep a
+  15-second client `private` cache only.
+- **`?fields=` projection** rejected: MeridianLink's JSON contract is masked MISMO containers, not numeric
+  field IDs, so the allowlist already defines the projection. Fewer knobs, no validation surface.
+- **Static site extras** (`index.html`, `llms.txt`, `robots.txt`, `sitemap.xml`, `CONTRIBUTING.md`) deferred;
+  they are distribution polish, not gateway behavior, and are logged in `todo.md`.
+- **VPC + NAT + static Elastic IP** added beyond the sister template because MeridianLink requires an
+  allowlisted egress address; the sister's Encompass host does not.
+
+Template size forced two concessions: the inlined deploy copy drops comments/indentation (source stays
+readable), and verbose CloudFormation descriptions were shortened. Final template: 50,858 bytes.
+
 ## 2026-11-06 — Local verification run (post-build)
 
 Ran `npm test` → **16/16 pass, 0 fail** (~1.0s). Then started the real stack

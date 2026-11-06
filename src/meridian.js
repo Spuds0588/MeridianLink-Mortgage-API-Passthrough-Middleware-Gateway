@@ -1,11 +1,14 @@
 /** MeridianLink Mortgage API client: Basic auth, MISMO XML over HTTPS (static egress in AWS). */
-function createMeridian({ baseUrl, username, password, timeoutMs = 8000 }) {
+function createMeridian({ baseUrl, username, password, passwordProvider, timeoutMs = 8000, fetchImpl = globalThis.fetch }) {
   if (!baseUrl) throw new Error("MERIDIAN_BASE_URL is required");
-  const authorization = `Basic ${Buffer.from(`${username}:${password}`).toString("base64")}`;
+  let resolvedPassword = password;
+  const secret = async () => (resolvedPassword ??= (await passwordProvider?.()) || "");
+
   const call = async (path, init = {}) => {
-    const res = await fetch(`${baseUrl.replace(/\/$/, "")}${path}`, {
+    const authorization = `Basic ${Buffer.from(`${username}:${await secret()}`).toString("base64")}`;
+    const res = await fetchImpl(`${baseUrl.replace(/\/$/, "")}${path}`, {
       ...init,
-      signal: AbortSignal.timeout(timeoutMs),
+      signal: AbortSignal.timeout(Number(timeoutMs) || 8000),
       headers: { Authorization: authorization, ...init.headers }
     });
     return { status: res.status, body: await res.text() };

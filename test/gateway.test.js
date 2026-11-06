@@ -1,215 +1,347 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { createMockMeridian } = require("../mock/meridian");
-const { createStore } = require("../src/store");
+const { createMemoryStore } = require("../dev/memory-store");
+const { createLocalRunner } = require("../dev/local-runner");
 const { createMeridian } = require("../src/meridian");
-const { createQueue } = require("../src/queue");
 const { createApp } = require("../src/app");
-const { createServer } = require("../src/server");
+const { localEnv, INVITES, createDevGateway } = require("../dev/server");
 
-async function setup(t, { lockOnWrite = 0, maxAttempts = 5 } = {}) {
+const httpEvent = ({ method = "GET", path, query = null, body = null, apiKeyId = null, headers = {} }) => ({
+  httpMethod: method,
+  path,
+  queryStringParameters: query,
+  headers,
+  body: body === null ? undefined : typeof body === "string" ? body : JSON.stringify(body),
+  requestContext: { requestId: "request-1", identity: apiKeyId ? { apiKeyId } : {} }
+});
+
+async function setup(t, { lockOnWrite = 0 } = {}) {
   const mock = createMockMeridian({ lockOnWrite });
   const { url } = await mock.listen(0);
-  const store = createStore();
-  const meridian = createMeridian({ baseUrl: url, username: "user", password: "pass" });
-  const queue = createQueue({ meridian, store, maxAttempts, retryDelayMs: 10 });
-  const app = createApp({ store, queue, meridian });
+  const store = createMemoryStore();
+  const meridian = createMeridian({ baseUrl: url, username: "demo", password: "demo" });
+  const app = createApp({ store, meridian, env: localEnv() });
+  const runner = createLocalRunner({ store, meridian, retryDelayMs: 1 });
   t.after(() => mock.close());
 
-  const call = (method, path, { body, key, query } = {}) =>
-    app.handle({
-      httpMethod: method,
-      path,
-      queryStringParameters: query,
-      headers: key ? { "x-api-key": key } : {},
-      body: body === undefined ? undefined : JSON.stringify(body)
+  const call = (method, path, { body, apiKeyId, query } = {}) => app.handle(httpEvent({ method, path, body, apiKeyId, query }));
+  const provision = (overrides = {}) =>
+    call("POST", "/portal", {
+      body: { tenantName: "First American Title", email: "dev@firstam.test", role: "title", code: INVITES.title, ...overrides }
     });
-  const provision = async (tenantName, role) => JSON.parse((await call("POST", "/portal", { body: { tenantName, role } })).body);
-  return { mock, store, queue, app, call, provision };
+  const tenantKey = async (overrides) => {
+    const res = await provision(overrides);
+    assert.equal(res.statusCode, 200, res.body);
+    const body = JSON.parse(res.body);
+    return { key: body.apiKey, apiKeyId: store.keyIdsByValue.get(body.apiKey), body };
+  };
+  const parse = (res) => JSON.parse(res.body);
+
+  return { mock, store, meridian, app, runner, call, provision, tenantKey, parse };
 }
 
-test("portal issues a key; title read is masked and never leaks NPI", async (t) => {
-  const { call, provision } = await setup(t);
-  const tenant = await provision("First American Title", "TITLE_VENDOR");
-  assert.match(tenant.apiKey, /^mlg_/);
-  assert.match(tenant.example, /x-api-key: mlg_/);
+test("GET /health is unauthenticated", async (t) => {
+  const { call } = await setup(t);
+  const res = await call("GET", "/health");
+  assert.equal(res.statusCode, 200);
+  assert.deepEqual(JSON.parse(res.body), { status: "ok", system: "MeridianLinkGateway" });
+});
 
-  const res = await call("GET", "/v1/loans/ML-998822", { key: tenant.apiKey });
+test("portal landing requires an invite link and publishes the field cheat sheet", async (t) => {
+  const { call } = await setup(t);
+  const res = await call("GET", "/portal");
+  assert.equal(res.statusCode, 200);
+  assert.match(res.headers["Content-Type"], /text\/html/);
+  assert.match(res.headers["Content-Security-Policy"], /frame-ancestors 'none'/);
+  assert.equal(res.headers["X-Frame-Options"], "DENY");
+  assert.match(res.body, /Invite link required/);
+  assert.match(res.body, /terms\.loanAmount/);
+  assert.match(res.body, /fees\[\]\.amount/);
+  assert.doesNotMatch(res.body, /admin token/i);
+});
+
+test("portal renders a persona-locked form for a valid invite and rejects the rest", async (t) => {
+  const { call } = await setup(t);
+
+  const good = await call("GET", "/portal", { query: { role: "title", code: INVITES.title } });
+  assert.equal(good.statusCode, 200);
+  assert.match(good.body, /Title \/ Settlement/);
+  assert.match(good.body, /TITLE_VENDOR/);
+  assert.match(good.body, /id="email"/);
+
+  const badCode = await call("GET", "/portal", { query: { role: "title", code: "nope" } });
+  assert.equal(badCode.statusCode, 403);
+  assert.match(badCode.body, /invalid or has expired/i);
+
+  const roleMismatch = await call("GET", "/portal", { query: { role: "broker", code: INVITES.title } });
+  assert.equal(roleMismatch.statusCode, 403);
+
+  const unknownRole = await call("GET", "/portal", { query: { role: "super_admin", code: INVITES.title } });
+  assert.equal(unknownRole.statusCode, 403);
+});
+
+test("portal provisions a persona-locked key and never stores it in plaintext", async (t) => {
+  const { tenantKey, store } = await setup(t);
+  const { key, apiKeyId, body } = await tenantKey();
+
+  assert.ok(key.startsWith("mlg_"));
+  assert.equal(body.role, "title");
+  assert.equal(body.persona, "TITLE_VENDOR");
+
+  const tenant = await store.getTenant(apiKeyId);
+  assert.equal(tenant.email, "dev@firstam.test");
+  assert.equal(tenant.persona, "TITLE_VENDOR");
+  assert.equal(tenant.apiKey, undefined);
+  assert.equal(JSON.stringify(tenant).includes(key), false);
+});
+
+test("portal validates the invite, company name, email and JSON body", async (t) => {
+  const { call } = await setup(t);
+
+  assert.equal((await call("POST", "/portal", { body: { tenantName: "Acme", email: "dev@acme.test", role: "title", code: "wrong" } })).statusCode, 403);
+  assert.equal((await call("POST", "/portal", { body: { tenantName: "Acme", email: "dev@acme.test", role: "broker", code: INVITES.title } })).statusCode, 403);
+  assert.equal((await call("POST", "/portal", { body: { tenantName: "", email: "dev@acme.test", role: "title", code: INVITES.title } })).statusCode, 400);
+  assert.equal((await call("POST", "/portal", { body: { tenantName: "Acme", email: "not-an-email", role: "title", code: INVITES.title } })).statusCode, 400);
+  assert.equal((await call("POST", "/portal", { body: "{not-json" })).statusCode, 400);
+});
+
+test("portal fails closed when a role has no configured invite code", async (t) => {
+  const mock = createMockMeridian();
+  const { url } = await mock.listen(0);
+  const store = createMemoryStore();
+  const meridian = createMeridian({ baseUrl: url, username: "u", password: "p" });
+  const app = createApp({ store, meridian, env: { INVITE_TITLE: undefined } });
+  t.after(() => mock.close());
+
+  const res = await app.handle(
+    httpEvent({ method: "POST", path: "/portal", body: { tenantName: "Acme", email: "dev@acme.test", role: "title", code: INVITES.title } })
+  );
+  assert.equal(res.statusCode, 403);
+});
+
+test("title read is masked and never leaks NPI", async (t) => {
+  const { call, tenantKey } = await setup(t);
+  const { apiKeyId, key } = await tenantKey();
+
+  const unauth = await call("GET", "/v1/loans/ML-998822");
+  assert.equal(unauth.statusCode, 403);
+
+  const res = await call("GET", "/v1/loans/ML-998822", { apiKeyId });
   assert.equal(res.statusCode, 200);
   assert.equal(res.headers["Cache-Control"], "private, max-age=15");
   const body = JSON.parse(res.body);
   assert.equal(body.loanId, "ML-998822");
+  assert.equal(body.milestone, "Underwriting");
   assert.equal(body.property.city, "Irvine");
-  assert.equal(body.terms.loanAmount, 450000);
   assert.equal(body.fees.length, 2);
   assert.equal(body.borrower, undefined);
   assert.equal(res.body.includes("123-45-6789"), false);
+  assert.equal(res.body.includes("742"), false);
+  assert.equal(res.body.includes(key), false);
 });
 
-test("broker persona sees borrower identity but not SSN or credit score", async (t) => {
-  const { call, provision } = await setup(t);
-  const tenant = await provision("Acme Mortgage Brokers", "TPO_BROKER");
-  const res = await call("GET", "/v1/loans/ML-998822", { key: tenant.apiKey });
-  const body = JSON.parse(res.body);
-  assert.equal(res.statusCode, 200);
-  assert.equal(body.borrower.name, "Dana Borrower");
-  assert.equal(body.borrower.taxpayerIdentifier, undefined);
-  assert.equal(body.borrower.creditScore, undefined);
-  assert.equal(body.conditions.length, 2);
+test("broker and appraisal personas get different masked shapes", async (t) => {
+  const { call, tenantKey } = await setup(t);
+  const broker = await tenantKey({ role: "broker", code: INVITES.broker, tenantName: "Acme Brokers", email: "dev@acme.test" });
+  const appraisal = await tenantKey({ role: "appraisal", code: INVITES.appraisal, tenantName: "Acme Appraisal", email: "amc@acme.test" });
+
+  const brokerBody = JSON.parse((await call("GET", "/v1/loans/ML-998822", { apiKeyId: broker.apiKeyId })).body);
+  assert.equal(brokerBody.borrower.name, "Dana Borrower");
+  assert.equal(brokerBody.borrower.taxpayerIdentifier, undefined);
+  assert.equal(brokerBody.borrower.creditScore, undefined);
+  assert.equal(brokerBody.conditions.length, 2);
+  assert.equal(brokerBody.lockStatus, "Locked");
+
+  const amcBody = JSON.parse((await call("GET", "/v1/loans/ML-998822", { apiKeyId: appraisal.apiKeyId })).body);
+  assert.equal(amcBody.borrower, undefined);
+  assert.equal(amcBody.fees, undefined);
+  assert.equal(amcBody.appraisalContact, "Acme Appraisal Co");
+  assert.equal(amcBody.terms.loanType, "Conventional");
 });
 
-test("read requires a valid key and maps upstream 404/423", async (t) => {
-  const { call, provision } = await setup(t);
-  assert.equal((await call("GET", "/v1/loans/ML-998822")).statusCode, 403);
-  assert.equal((await call("GET", "/v1/loans/ML-998822", { key: "mlg_nope" })).statusCode, 403);
+test("read maps upstream 404, 423 and unknown keys", async (t) => {
+  const { call, tenantKey } = await setup(t);
+  const { apiKeyId } = await tenantKey();
 
-  const tenant = await provision("Title Co", "TITLE_VENDOR");
-  const missing = await call("GET", "/v1/loans/ML-404", { key: tenant.apiKey });
-  assert.equal(missing.statusCode, 404);
-  assert.deepEqual(JSON.parse(missing.body), { error: "Loan not found" });
-
-  const locked = await call("GET", "/v1/loans/ML-LOCKED-1", { key: tenant.apiKey });
+  assert.equal((await call("GET", "/v1/loans/ML-998822", { apiKeyId: "key_unknown" })).statusCode, 403);
+  assert.equal((await call("GET", "/v1/loans/ML-404", { apiKeyId })).statusCode, 404);
+  const locked = await call("GET", "/v1/loans/ML-LOCKED-1", { apiKeyId });
   assert.equal(locked.statusCode, 423);
+  assert.equal(JSON.parse(locked.body).code, "FILE_LOCKED");
 });
 
-test("PATCH fees returns 202 and the worker completes the job", async (t) => {
-  const { call, queue, mock, provision } = await setup(t);
-  const tenant = await provision("Title Co", "TITLE_VENDOR");
+test("field schema is proxied, validated and cached per persona", async (t) => {
+  const { call, tenantKey, mock } = await setup(t);
+  const { apiKeyId } = await tenantKey();
+
+  const res = await call("GET", "/v1/fields", { apiKeyId, query: { ids: "11,CX.TITLE.STATUS" } });
+  assert.equal(res.statusCode, 200);
+  assert.equal(res.headers["Cache-Control"], "private, max-age=300");
+  const body = JSON.parse(res.body);
+  assert.equal(body["11"].description, "Subject Property Address Line");
+  assert.equal(body["CX.TITLE.STATUS"].type, "STRING");
+
+  await call("GET", "/v1/fields", { apiKeyId, query: { ids: "11,CX.TITLE.STATUS" } });
+  assert.equal(mock.state.fieldCalls, 1, "second lookup must hit the container cache");
+
+  assert.equal((await call("GET", "/v1/fields", { apiKeyId })).statusCode, 400);
+  assert.equal((await call("GET", "/v1/fields", { apiKeyId, query: { ids: "11;DROP" } })).statusCode, 400);
+  const tooMany = Array.from({ length: 101 }, (_, index) => `F${index}`).join(",");
+  assert.equal((await call("GET", "/v1/fields", { apiKeyId, query: { ids: tooMany } })).statusCode, 400);
+  assert.equal((await call("GET", "/v1/fields", { query: { ids: "11" } })).statusCode, 403);
+});
+
+test("field schema maps upstream failures", async (t) => {
+  const { call, tenantKey, mock } = await setup(t);
+  const { apiKeyId } = await tenantKey();
+
+  mock.state.fieldsFailure = 500;
+  assert.equal((await call("GET", "/v1/fields", { apiKeyId, query: { ids: "11" } })).statusCode, 502);
+});
+
+test("PATCH fees enqueues a job and the worker completes it", async (t) => {
+  const { call, runner, store, mock, tenantKey } = await setup(t);
+  const { apiKeyId } = await tenantKey();
 
   const res = await call("PATCH", "/v1/loans/ML-998822/fees", {
-    key: tenant.apiKey,
+    apiKeyId,
     body: { fees: [{ feeType: "TitleLenderCoveragePremium", amount: 1350, paidTo: "First American" }] }
   });
   assert.equal(res.statusCode, 202);
   const accepted = JSON.parse(res.body);
   assert.equal(accepted.status, "ACCEPTED");
-  assert.equal(accepted.loanId, "ML-998822");
+  assert.match(accepted.jobId, /^job_/);
   assert.equal(accepted.statusUrl, `/v1/jobs/${accepted.jobId}`);
+  assert.equal(store.queue.length, 1);
+  assert.equal(store.queue[0].fees.length, 1);
 
-  await queue.idle();
-  const job = JSON.parse((await call("GET", accepted.statusUrl, { key: tenant.apiKey })).body);
-  assert.equal(job.status, "COMPLETED");
-  assert.equal(job.attempts, 1);
-  assert.equal(job.error, null);
-  assert.equal(job.fees, undefined, "job view must not echo fee payloads");
+  const pending = JSON.parse((await call("GET", accepted.statusUrl, { apiKeyId })).body);
+  assert.equal(pending.status, "PENDING");
+  assert.equal(pending.fees, undefined, "job view must not echo fee payloads");
+
+  await runner.drain();
+  const done = JSON.parse((await call("GET", accepted.statusUrl, { apiKeyId })).body);
+  assert.equal(done.status, "COMPLETED");
+  assert.equal(done.attempts, 1);
+  assert.equal(done.error, null);
   assert.equal(mock.state.updates.length, 1);
   assert.match(mock.state.updates[0].body, /<FeeActualPaymentAmount>1350\.00<\/FeeActualPaymentAmount>/);
+  const job = await store.getJob(accepted.jobId);
+  assert.equal(job.fees, undefined);
 });
 
-test("write retries through record-lock contention", async (t) => {
-  const { call, queue, mock, provision } = await setup(t, { lockOnWrite: 2 });
-  const tenant = await provision("Title Co", "TITLE_VENDOR");
+test("write retries record-lock contention then completes", async (t) => {
+  const { call, runner, mock, tenantKey } = await setup(t, { lockOnWrite: 2 });
+  const { apiKeyId } = await tenantKey();
 
-  const res = await call("PATCH", "/v1/loans/ML-998822/fees", { key: tenant.apiKey, body: { fees: [{ feeType: "SettlementClosingFee", amount: 650 }] } });
-  await queue.idle();
+  const res = await call("PATCH", "/v1/loans/ML-998822/fees", { apiKeyId, body: { fees: [{ feeType: "SettlementClosingFee", amount: 650 }] } });
+  await runner.drain();
 
-  const job = JSON.parse((await call("GET", `/v1/jobs/${JSON.parse(res.body).jobId}`, { key: tenant.apiKey })).body);
+  const job = JSON.parse((await call("GET", `/v1/jobs/${JSON.parse(res.body).jobId}`, { apiKeyId })).body);
   assert.equal(job.status, "COMPLETED");
   assert.equal(job.attempts, 3);
   assert.equal(mock.state.updates.length, 1);
 });
 
-test("exhausted retries end FAILED with the upstream reason", async (t) => {
-  const { call, queue, provision } = await setup(t, { lockOnWrite: 9, maxAttempts: 3 });
-  const tenant = await provision("Title Co", "TITLE_VENDOR");
+test("write stops after the retry budget and fails the job", async (t) => {
+  const { call, runner, tenantKey } = await setup(t, { lockOnWrite: 9 });
+  const { apiKeyId } = await tenantKey();
 
-  const res = await call("PATCH", "/v1/loans/ML-998822/fees", { key: tenant.apiKey, body: { fees: [{ feeType: "SettlementClosingFee", amount: 650 }] } });
-  await queue.idle();
+  const res = await call("PATCH", "/v1/loans/ML-998822/fees", { apiKeyId, body: { fees: [{ feeType: "SettlementClosingFee", amount: 650 }] } });
+  await runner.drain();
 
-  const job = JSON.parse((await call("GET", `/v1/jobs/${JSON.parse(res.body).jobId}`, { key: tenant.apiKey })).body);
+  const job = JSON.parse((await call("GET", `/v1/jobs/${JSON.parse(res.body).jobId}`, { apiKeyId })).body);
   assert.equal(job.status, "FAILED");
-  assert.equal(job.attempts, 3);
-  assert.equal(job.error, "upstream 423");
+  assert.equal(job.attempts, 5);
+  assert.match(job.error, /423/);
+});
+
+test("write fails permanently on a non-retryable upstream status", async (t) => {
+  const { call, runner, store, tenantKey } = await setup(t);
+  const { apiKeyId } = await tenantKey();
+
+  const res = await call("PATCH", "/v1/loans/ML-404/fees", { apiKeyId, body: { fees: [{ feeType: "SettlementClosingFee", amount: 1 }] } });
+  await runner.drain();
+
+  const job = JSON.parse((await call("GET", `/v1/jobs/${JSON.parse(res.body).jobId}`, { apiKeyId })).body);
+  assert.equal(job.status, "FAILED");
+  assert.equal(job.error, "upstream 404");
+  assert.equal(store.queue.length, 0);
 });
 
 test("write validation rejects malformed payloads", async (t) => {
-  const { call, provision } = await setup(t);
-  const tenant = await provision("Title Co", "TITLE_VENDOR");
+  const { call, tenantKey } = await setup(t);
+  const { apiKeyId } = await tenantKey();
+  const patch = (body) => call("PATCH", "/v1/loans/ML-998822/fees", { apiKeyId, body });
 
-  assert.equal((await call("PATCH", "/v1/loans/ML-998822/fees", { key: tenant.apiKey, body: {} })).statusCode, 400);
-  assert.equal((await call("PATCH", "/v1/loans/ML-998822/fees", { key: tenant.apiKey, body: { fees: [] } })).statusCode, 400);
-  assert.equal((await call("PATCH", "/v1/loans/ML-998822/fees", { key: tenant.apiKey, body: { fees: [{ feeType: "", amount: 1 }] } })).statusCode, 400);
-  assert.equal((await call("PATCH", "/v1/loans/ML-998822/fees", { key: tenant.apiKey, body: { fees: [{ feeType: "X", amount: "12" }] } })).statusCode, 400);
+  assert.equal((await patch({})).statusCode, 400);
+  assert.equal((await patch({ fees: [] })).statusCode, 400);
+  assert.equal((await patch({ fees: [{ feeType: "", amount: 1 }] })).statusCode, 400);
+  assert.equal((await patch({ fees: [{ feeType: "X", amount: "12" }] })).statusCode, 400);
+  assert.equal((await patch({ fees: [{ feeType: "X", amount: -1 }] })).statusCode, 400);
   assert.equal((await call("PATCH", "/v1/loans/ML-998822/fees", { body: { fees: [{ feeType: "X", amount: 1 }] } })).statusCode, 403);
 });
 
-test("jobs are private to the tenant that created them", async (t) => {
-  const { call, queue, provision } = await setup(t);
-  const owner = await provision("Owner Title", "TITLE_VENDOR");
-  const rival = await provision("Rival Title", "TITLE_VENDOR");
+test("job status is scoped to the owning API key", async (t) => {
+  const { call, runner, tenantKey } = await setup(t);
+  const owner = await tenantKey();
+  const rival = await tenantKey({ tenantName: "Rival Title", email: "dev@rival.test" });
 
-  const res = await call("PATCH", "/v1/loans/ML-998822/fees", { key: owner.apiKey, body: { fees: [{ feeType: "SettlementClosingFee", amount: 600 }] } });
-  await queue.idle();
+  const res = await call("PATCH", "/v1/loans/ML-998822/fees", { apiKeyId: owner.apiKeyId, body: { fees: [{ feeType: "SettlementClosingFee", amount: 600 }] } });
+  await runner.drain();
   const jobId = JSON.parse(res.body).jobId;
 
-  assert.equal((await call("GET", `/v1/jobs/${jobId}`, { key: rival.apiKey })).statusCode, 403);
-  assert.equal((await call("GET", `/v1/jobs/${jobId}`, { key: owner.apiKey })).statusCode, 200);
-  assert.equal((await call("GET", "/v1/jobs/job-missing", { key: owner.apiKey })).statusCode, 404);
+  assert.equal((await call("GET", `/v1/jobs/${jobId}`, { apiKeyId: rival.apiKeyId })).statusCode, 404);
+  assert.equal((await call("GET", `/v1/jobs/${jobId}`, { apiKeyId: owner.apiKeyId })).statusCode, 200);
+  assert.equal((await call("GET", "/v1/jobs/job_missing", { apiKeyId: owner.apiKeyId })).statusCode, 404);
 });
 
-test("field dictionary is proxied from the source of truth", async (t) => {
-  const { call, provision } = await setup(t);
-  const tenant = await provision("Title Co", "TITLE_VENDOR");
-
-  const res = await call("GET", "/v1/fields", { key: tenant.apiKey, query: { ids: "11,CX.TITLE.STATUS" } });
-  assert.equal(res.statusCode, 200);
-  assert.equal(JSON.parse(res.body)["11"].description, "Subject Property Address Line");
-  assert.equal(JSON.parse(res.body)["CX.TITLE.STATUS"].type, "STRING");
-
-  assert.equal((await call("GET", "/v1/fields", { key: tenant.apiKey })).statusCode, 400);
-  assert.equal((await call("GET", "/v1/fields", { query: { ids: "11" } })).statusCode, 403);
-});
-
-test("portal rejects bad provisioning input and unknown routes", async (t) => {
+test("unknown routes and wrong methods are rejected", async (t) => {
   const { call } = await setup(t);
-  assert.equal((await call("POST", "/portal", { body: {} })).statusCode, 400);
-  assert.equal((await call("POST", "/portal", { body: { tenantName: "X", role: "SUPER_ADMIN" } })).statusCode, 400);
   assert.equal((await call("GET", "/v1/nope")).statusCode, 404);
   assert.equal((await call("DELETE", "/v1/loans/ML-1")).statusCode, 405);
+  assert.equal((await call("POST", "/v1/loans/ML-1")).statusCode, 405);
+  assert.equal((await call("PUT", "/portal")).statusCode, 405);
+  assert.equal((await call("POST", "/v1/fields")).statusCode, 405);
 });
 
-test("local HTTP server serves health, portal and a full read/write flow", async (t) => {
-  const { app } = await setup(t);
-  const server = createServer(app.handle);
-  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-  t.after(() => new Promise((resolve) => server.close(resolve)));
-  const base = `http://127.0.0.1:${server.address().port}`;
+test("local HTTP stack serves health, invite portal, masked read and an async write", async (t) => {
+  const gateway = await createDevGateway({ port: 0 });
+  t.after(() => gateway.close());
 
-  const health = await fetch(`${base}/health`);
+  const health = await fetch(`${gateway.url}/health`);
   assert.equal(health.status, 200);
-  assert.equal((await health.json()).status, "ok");
 
-  const portal = await fetch(`${base}/portal`);
+  const portal = await fetch(`${gateway.url}/portal?role=title&code=${INVITES.title}`);
   assert.equal(portal.status, 200);
-  assert.match(portal.headers.get("content-type"), /text\/html/);
-  assert.match(await portal.text(), /Provision API Access/);
+  assert.match(await portal.text(), /Generate API key/);
 
-  const provisioned = await fetch(`${base}/portal`, {
+  const provisioned = await fetch(`${gateway.url}/portal`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ tenantName: "First American Title", role: "TITLE_VENDOR" })
+    body: JSON.stringify({ tenantName: "First American Title", email: "dev@firstam.test", role: "title", code: INVITES.title })
   });
+  assert.equal(provisioned.status, 200);
   const { apiKey } = await provisioned.json();
 
-  const read = await fetch(`${base}/v1/loans/ML-998822`, { headers: { "x-api-key": apiKey } });
+  const read = await fetch(`${gateway.url}/v1/loans/ML-998822`, { headers: { "x-api-key": apiKey } });
   assert.equal(read.status, 200);
   assert.equal((await read.json()).property.state, "CA");
 
-  const write = await fetch(`${base}/v1/loans/ML-998822/fees`, {
+  const write = await fetch(`${gateway.url}/v1/loans/ML-998822/fees`, {
     method: "PATCH",
     headers: { "x-api-key": apiKey, "Content-Type": "application/json" },
     body: JSON.stringify({ fees: [{ feeType: "TitleLenderCoveragePremium", amount: 1400 }] })
   });
   assert.equal(write.status, 202);
-  const { jobId, statusUrl } = await write.json();
-  assert.ok(jobId.startsWith("job-"));
+  const { statusUrl } = await write.json();
 
   let job;
-  for (let i = 0; i < 50; i += 1) {
-    job = await (await fetch(`${base}${statusUrl}`, { headers: { "x-api-key": apiKey } })).json();
+  for (let i = 0; i < 100; i += 1) {
+    job = await (await fetch(`${gateway.url}${statusUrl}`, { headers: { "x-api-key": apiKey } })).json();
     if (job.status === "COMPLETED") break;
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
   assert.equal(job.status, "COMPLETED");
-  assert.equal(job.attempts, 1);
 });

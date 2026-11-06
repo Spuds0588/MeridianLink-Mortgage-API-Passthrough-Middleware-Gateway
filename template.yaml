@@ -1,0 +1,1154 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: MeridianLink Mortgage API passthrough gateway (MISMO to JSON, persona masking, FIFO writes, invite portal, static egress IP).
+
+Parameters:
+  MeridianBaseUrl:
+    Type: String
+    MinLength: 1
+    Description: MeridianLink Mortgage API base URL.
+  MeridianUsername:
+    Type: String
+    MinLength: 1
+    Description: MeridianLink API username.
+  MeridianPassword:
+    Type: String
+    NoEcho: true
+    MinLength: 1
+    Description: MeridianLink API password (stored in Secrets Manager).
+  TitleInviteCode:
+    Type: String
+    NoEcho: true
+    MinLength: 24
+    Description: Invite code for role=title.
+  BrokerInviteCode:
+    Type: String
+    NoEcho: true
+    MinLength: 24
+    Description: Invite code for role=broker.
+  AppraisalInviteCode:
+    Type: String
+    NoEcho: true
+    MinLength: 24
+    Description: Invite code for role=appraisal.
+  LogRetentionInDays:
+    Type: Number
+    Default: 30
+    MinValue: 1
+    MaxValue: 3653
+
+Resources:
+  Vpc:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.42.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 10.42.0.0/24
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      MapPublicIpOnLaunch: true
+
+  PrivateSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref Vpc
+      CidrBlock: 10.42.1.0/24
+      AvailabilityZone: !Select [0, !GetAZs ""]
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+
+  VpcGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref Vpc
+      InternetGatewayId: !Ref InternetGateway
+
+  NatEip:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+
+  NatGateway:
+    Type: AWS::EC2::NatGateway
+    DependsOn: VpcGatewayAttachment
+    Properties:
+      AllocationId: !GetAtt NatEip.AllocationId
+      SubnetId: !Ref PublicSubnet
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: VpcGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet
+      RouteTableId: !Ref PublicRouteTable
+
+  PrivateRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref Vpc
+
+  PrivateRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway
+
+  PrivateSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateSubnet
+      RouteTableId: !Ref PrivateRouteTable
+
+  LambdaSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Gateway Lambda egress only
+      VpcId: !Ref Vpc
+      SecurityGroupEgress:
+        - IpProtocol: "-1"
+          CidrIp: 0.0.0.0/0
+
+  MeridianSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub "${AWS::StackName}/meridian-password"
+      SecretString: !Ref MeridianPassword
+
+  TenantsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: apiKeyId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: apiKeyId
+          KeyType: HASH
+      SSESpecification:
+        SSEEnabled: true
+
+  JobsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: jobId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: jobId
+          KeyType: HASH
+      SSESpecification:
+        SSEEnabled: true
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+
+  DeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "${AWS::StackName}-writes-dlq.fifo"
+      FifoQueue: true
+      MessageRetentionPeriod: 1209600
+
+  WriteQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "${AWS::StackName}-writes.fifo"
+      FifoQueue: true
+      ContentBasedDeduplication: false
+      VisibilityTimeout: 120
+      MessageRetentionPeriod: 1209600
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt DeadLetterQueue.Arn
+        maxReceiveCount: 5
+
+  GatewayRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: gateway-access
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                Resource:
+                  - !GetAtt TenantsTable.Arn
+                  - !GetAtt JobsTable.Arn
+              - Effect: Allow
+                Action:
+                  - sqs:SendMessage
+                  - sqs:ReceiveMessage
+                  - sqs:DeleteMessage
+                  - sqs:ChangeMessageVisibility
+                  - sqs:GetQueueAttributes
+                Resource:
+                  - !GetAtt WriteQueue.Arn
+                  - !GetAtt DeadLetterQueue.Arn
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: !Ref MeridianSecret
+              - Effect: Allow
+                Action: apigateway:POST
+                Resource:
+                  - !Sub "arn:${AWS::Partition}:apigateway:${AWS::Region}::/apikeys"
+                  - !Sub "arn:${AWS::Partition}:apigateway:${AWS::Region}::/usageplans/${UsagePlan}/keys"
+              - Effect: Allow
+                Action:
+                  - ec2:CreateNetworkInterface
+                  - ec2:DescribeNetworkInterfaces
+                  - ec2:DeleteNetworkInterface
+                Resource: "*"
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub "arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${AWS::StackName}-gateway:*"
+
+  GatewayLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/${GatewayFunction}"
+      RetentionInDays: !Ref LogRetentionInDays
+
+  GatewayFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-gateway"
+      Runtime: nodejs20.x
+      Handler: index.handler
+      Architectures:
+        - arm64
+      MemorySize: 256
+      Timeout: 29
+      Role: !GetAtt GatewayRole.Arn
+      VpcConfig:
+        SubnetIds:
+          - !Ref PrivateSubnet
+        SecurityGroupIds:
+          - !Ref LambdaSecurityGroup
+      Environment:
+        Variables:
+          TENANT_TABLE: !Ref TenantsTable
+          JOB_TABLE: !Ref JobsTable
+          WRITE_QUEUE_URL: !Ref WriteQueue
+          USAGE_PLAN_ID: !Ref UsagePlan
+          MERIDIAN_BASE_URL: !Ref MeridianBaseUrl
+          MERIDIAN_USERNAME: !Ref MeridianUsername
+          MERIDIAN_SECRET_ARN: !Ref MeridianSecret
+          INVITE_TITLE: !Ref TitleInviteCode
+          INVITE_BROKER: !Ref BrokerInviteCode
+          INVITE_APPRAISAL: !Ref AppraisalInviteCode
+          UPSTREAM_TIMEOUT_MS: "8000"
+      Code:
+        ZipFile: |
+         "use strict";
+         const __nativeRequire = require;
+         const __defs = {
+         "lambda.js": (module, exports, require) => {
+         const { createApp } = require("./app");
+         const { createMeridian } = require("./meridian");
+         const { processWrite } = require("./writes");
+         const { log } = require("./log");
+         function createHandler({ store, env = process.env, meridian, now = () => Date.now() }) {
+         let client = meridian ?? null;
+         const getClient = () => {
+         if (!client) {
+         client = createMeridian({
+         baseUrl: env.MERIDIAN_BASE_URL,
+         username: env.MERIDIAN_USERNAME,
+         passwordProvider: async () => (await store.getSecret()).password,
+         timeoutMs: env.UPSTREAM_TIMEOUT_MS
+         });
+         }
+         return client;
+         };
+         const lazyMeridian = {
+         getLoan: (loanId) => getClient().getLoan(loanId),
+         updateFees: (loanId, xml) => getClient().updateFees(loanId, xml),
+         getFields: (ids) => getClient().getFields(ids)
+         };
+         const app = createApp({ store, meridian: lazyMeridian, env, now });
+         async function handleQueue(records) {
+         const batchItemFailures = [];
+         for (const record of records) {
+         const attempts = Number(record.attributes?.ApproximateReceiveCount) || 1;
+         let jobId;
+         try {
+         const message = JSON.parse(record.body || "{}");
+         jobId = message.jobId;
+         await processWrite({ job: await store.getJob(message.jobId), fees: message.fees, meridian: lazyMeridian, store, attempts, now });
+         } catch (err) {
+         log("WARN", "WRITE_RETRY_SCHEDULED", { jobId, messageId: record.messageId, attempts, message: err.message });
+         batchItemFailures.push({ itemIdentifier: record.messageId });
+         }
+         }
+         return { batchItemFailures };
+         }
+         return async function handler(event = {}) {
+         if (Array.isArray(event.Records) && event.Records[0]?.eventSource === "aws:sqs") return handleQueue(event.Records);
+         return app.handle(event);
+         };
+         }
+         let defaultHandler = null;
+         exports.handler = async (event, context) => {
+         if (!defaultHandler) {
+         const { createAwsStore } = require("./aws-store");
+         defaultHandler = createHandler({ store: createAwsStore(process.env) });
+         }
+         return defaultHandler(event, context);
+         };
+         exports.createHandler = createHandler;
+         },
+         "app.js": (module, exports, require) => {
+         const { randomUUID } = require("node:crypto");
+         const { log } = require("./log");
+         const { mask } = require("./mask");
+         const { parseLoan } = require("./mismo");
+         const { roleFor, safeEqual } = require("./roles");
+         const { renderPortal } = require("./portal");
+         const MAX_IDS = 100;
+         const FIELD_ID = /^[A-Za-z0-9._-]+$/;
+         const SCHEMA_TTL_MS = 5 * 60_000;
+         const SCHEMA_CACHE_MAX = 200;
+         const JOB_TTL_SECONDS = 30 * 24 * 60 * 60;
+         const json = (statusCode, body, headers = {}) => ({
+         statusCode,
+         headers: { "Content-Type": "application/json", "Cache-Control": "no-store", ...headers },
+         body: JSON.stringify(body)
+         });
+         const error = (statusCode, message, extra = {}) => json(statusCode, { error: message, ...extra });
+         const html = (statusCode, body) => ({
+         statusCode,
+         headers: {
+         "Content-Type": "text/html; charset=utf-8",
+         "Cache-Control": "no-store",
+         "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'",
+         "X-Frame-Options": "DENY"
+         },
+         body
+         });
+         const decode = (value) => {
+         try {
+         return decodeURIComponent(value);
+         } catch {
+         return value;
+         }
+         };
+         const parseIds = (raw) => {
+         const ids = [...new Set(String(raw || "").split(",").map((id) => id.trim()).filter(Boolean))];
+         return ids.length && ids.length <= MAX_IDS && ids.every((id) => FIELD_ID.test(id)) ? ids : null;
+         };
+         const validFees = (fees) =>
+         Array.isArray(fees) &&
+         fees.length > 0 &&
+         fees.length <= MAX_IDS &&
+         fees.every(
+         (fee) =>
+         typeof fee?.feeType === "string" &&
+         fee.feeType.trim().length > 0 &&
+         fee.feeType.length <= 100 &&
+         Number.isFinite(fee.amount) &&
+         fee.amount >= 0 &&
+         (fee.paidTo === undefined || (typeof fee.paidTo === "string" && fee.paidTo.length <= 200))
+         );
+         function createApp({ store, meridian, env = process.env, now = () => Date.now() }) {
+         if (!store) throw new Error("createApp requires a store");
+         const schemaCache = new Map();
+         const tenantFor = async (apiKeyId) => (apiKeyId ? (await store.getTenant(apiKeyId)) || null : null);
+         async function fields(event, apiKeyId) {
+         const tenant = await tenantFor(apiKeyId);
+         if (!tenant) return error(403, "Unauthorized tenant mapping");
+         const ids = parseIds(event.queryStringParameters?.ids);
+         if (!ids) return error(400, "ids is required (comma-separated, max 100)");
+         const cacheKey = `${tenant.persona}|${ids.join(",")}`;
+         const cached = schemaCache.get(cacheKey);
+         if (cached && cached.expiresAt > now()) {
+         log("INFO", "FIELD_SCHEMA_CACHE_HIT", { count: ids.length });
+         return json(200, cached.body, { "Cache-Control": "private, max-age=300" });
+         }
+         let upstream;
+         try {
+         upstream = await meridian.getFields(ids);
+         } catch (err) {
+         log("ERROR", "MERIDIANLINK_UNREACHABLE", { path: "/v1/fields", message: err.message });
+         return error(502, "MeridianLink field schema unavailable");
+         }
+         if (upstream.status === 401 || upstream.status === 403) {
+         log("ERROR", "MERIDIANLINK_REJECTED_CREDENTIALS", { path: "/v1/fields", status: upstream.status });
+         return error(502, "MeridianLink rejected gateway credentials");
+         }
+         if (upstream.status !== 200) {
+         log("ERROR", "FIELD_SCHEMA_FAILED", { status: upstream.status });
+         return error(502, "MeridianLink field schema unavailable");
+         }
+         let definitions;
+         try {
+         definitions = JSON.parse(upstream.body);
+         } catch {
+         return error(502, "Invalid MeridianLink response");
+         }
+         if (!definitions || typeof definitions !== "object" || Object.keys(definitions).length === 0) {
+         return error(404, "No field definitions found");
+         }
+         schemaCache.set(cacheKey, { body: definitions, expiresAt: now() + SCHEMA_TTL_MS });
+         if (schemaCache.size > SCHEMA_CACHE_MAX) schemaCache.clear();
+         log("INFO", "FIELD_SCHEMA_LOOKUP", { count: Object.keys(definitions).length, requested: ids.length });
+         return json(200, definitions, { "Cache-Control": "private, max-age=300" });
+         }
+         async function readLoan(event, apiKeyId, loanId) {
+         const tenant = await tenantFor(apiKeyId);
+         if (!tenant) return error(403, "Unauthorized tenant mapping");
+         let upstream;
+         try {
+         upstream = await meridian.getLoan(loanId);
+         } catch (err) {
+         log("ERROR", "MERIDIANLINK_READ_FAILED", { loanId, message: err.message });
+         return error(err.name === "TimeoutError" ? 504 : 502, "MeridianLink request failed");
+         }
+         log("INFO", "MERIDIANLINK_READ_COMPLETE", { loanId, status: upstream.status });
+         if (upstream.status === 423) return error(423, "Loan is locked by MeridianLink", { code: "FILE_LOCKED" });
+         if (upstream.status === 404) return error(404, "Loan not found");
+         if (upstream.status === 429) return error(429, "MeridianLink rate limit reached");
+         if (upstream.status === 401 || upstream.status === 403) return error(502, "MeridianLink rejected gateway credentials");
+         if (upstream.status >= 500) return error(502, "MeridianLink unavailable");
+         if (upstream.status >= 300) return error(400, "MeridianLink rejected the request", { upstreamStatus: upstream.status });
+         const masked = mask(parseLoan(upstream.body), tenant.persona);
+         if (!masked) return error(403, `Persona ${tenant.persona} has no schema allowlist`);
+         log("INFO", "SCHEMA_MASKING_APPLIED", { loanId, persona: tenant.persona });
+         return json(200, masked, { "Cache-Control": "private, max-age=15" });
+         }
+         async function enqueueWrite(event, apiKeyId, loanId) {
+         const tenant = await tenantFor(apiKeyId);
+         if (!tenant) return error(403, "Unauthorized tenant mapping");
+         let payload;
+         try {
+         payload = JSON.parse(event.body || "");
+         } catch {
+         return error(400, "Invalid JSON body");
+         }
+         if (!validFees(payload?.fees)) {
+         return error(400, "Body must contain a non-empty fees array (max 100) of { feeType, amount }");
+         }
+         const createdAt = new Date(now()).toISOString();
+         const job = {
+         jobId: `job_${randomUUID()}`,
+         loanId,
+         apiKeyId,
+         tenantName: tenant.tenantName,
+         persona: tenant.persona,
+         status: "PENDING",
+         attempts: 0,
+         error: null,
+         createdAt,
+         updatedAt: createdAt,
+         ttl: Math.floor(now() / 1000) + JOB_TTL_SECONDS
+         };
+         await store.putJob(job);
+         try {
+         await store.enqueueWrite({ jobId: job.jobId, loanId, fees: payload.fees });
+         } catch (err) {
+         await store.putJob({ ...job, status: "FAILED", error: "Queue unavailable", updatedAt: new Date(now()).toISOString() });
+         log("ERROR", "WRITE_ENQUEUE_FAILED", { jobId: job.jobId, loanId, message: err.message });
+         return error(503, "Write queue unavailable");
+         }
+         log("INFO", "WRITE_ENQUEUED", { jobId: job.jobId, loanId, tenantName: tenant.tenantName, feeCount: payload.fees.length });
+         return json(202, { status: "ACCEPTED", jobId: job.jobId, loanId, statusUrl: `/v1/jobs/${job.jobId}` });
+         }
+         async function jobStatus(apiKeyId, jobId) {
+         const tenant = await tenantFor(apiKeyId);
+         if (!tenant) return error(403, "Unauthorized tenant mapping");
+         const job = await store.getJob(jobId);
+         if (!job || job.apiKeyId !== apiKeyId) return error(404, "Job not found");
+         return json(200, {
+         jobId: job.jobId,
+         loanId: job.loanId,
+         status: job.status,
+         attempts: job.attempts,
+         createdAt: job.createdAt,
+         updatedAt: job.updatedAt,
+         error: job.error || null
+         });
+         }
+         async function provision(event, requestId) {
+         let payload;
+         try {
+         payload = JSON.parse(event.body || "");
+         } catch {
+         return error(400, "Invalid JSON body");
+         }
+         const role = String(payload?.role || "").trim().toLowerCase();
+         const config = roleFor(env, role);
+         if (!config || !safeEqual(String(payload?.code || ""), config.code)) {
+         log("WARN", "PORTAL_INVITE_REJECTED", { requestId, role: role || "unknown" });
+         return error(403, "Invalid or expired invite link");
+         }
+         const tenantName = String(payload.tenantName || "").trim();
+         const email = String(payload.email || "").trim();
+         if (!tenantName || tenantName.length > 100) return error(400, "tenantName is required (max 100 chars)");
+         if (!email || email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) return error(400, "A valid email is required");
+         const key = await store.createApiKey({ tenantName });
+         await store.putTenant({
+         apiKeyId: key.id,
+         tenantName,
+         email,
+         role,
+         persona: config.persona,
+         status: "ACTIVE",
+         createdAt: new Date(now()).toISOString()
+         });
+         log("INFO", "TENANT_PROVISIONED", { tenantName, role, persona: config.persona, apiKeyId: key.id });
+         return json(200, {
+         message: "Tenant provisioned successfully",
+         apiKey: key.value,
+         tenantName,
+         email,
+         role,
+         persona: config.persona
+         });
+         }
+         async function handle(event = {}) {
+         const method = String(event.httpMethod || event.requestContext?.http?.method || "GET").toUpperCase();
+         const path = event.path || event.rawPath || "/";
+         const requestId = event.requestContext?.requestId;
+         const apiKeyId = event.requestContext?.identity?.apiKeyId;
+         const started = now();
+         log("INFO", "REQUEST_RECEIVED", { requestId, method, path });
+         try {
+         if (method === "GET" && path === "/health") return json(200, { status: "ok", system: "MeridianLinkGateway" });
+         if (path === "/portal") {
+         if (method === "POST") return await provision(event, requestId);
+         if (method !== "GET") return error(405, "Method not allowed");
+         const role = String(event.queryStringParameters?.role || "").trim().toLowerCase();
+         const code = String(event.queryStringParameters?.code || "");
+         if (!role && !code) return html(200, renderPortal());
+         const config = roleFor(env, role);
+         if (!config || !safeEqual(code, config.code)) {
+         log("WARN", "PORTAL_INVITE_REJECTED", { requestId, role: role || "unknown" });
+         return html(403, renderPortal({ error: "This invite link is invalid or has expired." }));
+         }
+         return html(200, renderPortal({ role: config }));
+         }
+         if (path === "/v1/fields") {
+         return method === "GET" ? await fields(event, apiKeyId) : error(405, "Method not allowed");
+         }
+         let match;
+         if ((match = /^\/v1\/loans\/([^/]+)\/fees$/.exec(path))) {
+         if (method !== "PATCH") return error(405, "Method not allowed");
+         return await enqueueWrite(event, apiKeyId, decode(match[1]));
+         }
+         if ((match = /^\/v1\/loans\/([^/]+)$/.exec(path))) {
+         const loanId = decode(match[1]);
+         if (method === "GET") return await readLoan(event, apiKeyId, loanId);
+         if (method === "PATCH") return await enqueueWrite(event, apiKeyId, loanId);
+         return error(405, "Method not allowed");
+         }
+         if ((match = /^\/v1\/jobs\/([^/]+)$/.exec(path))) {
+         if (method !== "GET") return error(405, "Method not allowed");
+         return await jobStatus(apiKeyId, decode(match[1]));
+         }
+         return error(404, "Not found");
+         } catch (err) {
+         log("ERROR", "HANDLER_EXCEPTION", { requestId, method, path, message: err.message, stack: err.stack });
+         return error(500, "Internal gateway error");
+         } finally {
+         log("INFO", "REQUEST_COMPLETE", { requestId, method, path, durationMs: now() - started });
+         }
+         }
+         return { handle };
+         }
+         module.exports = { createApp };
+         },
+         "log.js": (module, exports, require) => {
+         const log = (level, action, details = {}) =>
+         console.log(JSON.stringify({ timestamp: new Date().toISOString(), system: "MeridianLinkGateway", level, action, ...details }));
+         module.exports = { log };
+         },
+         "mask.js": (module, exports, require) => {
+         const ALLOWLISTS = {
+         TITLE_VENDOR: [
+         "loanId", "milestone",
+         "property.street", "property.city", "property.state", "property.postalCode",
+         "terms.loanAmount", "terms.noteRate", "terms.estimatedClosingDate",
+         "fees"
+         ],
+         TPO_BROKER: ["loanId", "milestone", "property", "terms", "borrower.name", "borrower.email", "conditions", "lockStatus"],
+         AMC_VENDOR: ["loanId", "milestone", "property", "appraisalContact", "terms.loanType", "terms.loanAmount"]
+         };
+         const get = (obj, path) => path.split(".").reduce((node, key) => (node == null ? undefined : node[key]), obj);
+         const set = (obj, path, value) => {
+         const keys = path.split(".");
+         const leaf = keys.pop();
+         const target = keys.reduce((node, key) => (node[key] ??= {}), obj);
+         target[leaf] = value;
+         return obj;
+         };
+         const mask = (loan, role) => {
+         const allow = ALLOWLISTS[role];
+         if (!allow) return null;
+         return allow
+         .filter((path) => get(loan, path) != null)
+         .reduce((out, path) => set(out, path, get(loan, path)), {});
+         };
+         module.exports = { mask, ALLOWLISTS };
+         },
+         "mismo.js": (module, exports, require) => {
+         const escapeXml = (value) => String(value).replace(/[<>&'"]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", "'": "&apos;", '"': "&quot;" })[c]);
+         const tag = (xml, name) => new RegExp(`<${name}(?:\\s[^>]*)?>([\\s\\S]*?)</${name}>`, "i").exec(xml)?.[1].trim() ?? null;
+         const blocks = (xml, name) => [...xml.matchAll(new RegExp(`<${name}(?:\\s[^>]*)?>([\\s\\S]*?)</${name}>`, "gi"))].map((m) => m[1]);
+         const num = (raw) => { const n = Number(raw); return raw == null || raw === "" || Number.isNaN(n) ? null : n; };
+         const parseLoan = (xml) => ({
+         loanId: tag(xml, "LoanIdentifier") ?? "UNKNOWN",
+         milestone: tag(xml, "CurrentMilestoneName") ?? "Processing",
+         property: {
+         street: tag(xml, "AddressLineText"),
+         city: tag(xml, "CityName"),
+         state: tag(xml, "StateCode"),
+         postalCode: tag(xml, "PostalCode"),
+         legalDescription: tag(xml, "LegalDescription")
+         },
+         terms: {
+         loanAmount: num(tag(xml, "LoanAmount")),
+         noteRate: num(tag(xml, "NoteRatePercent")),
+         estimatedClosingDate: tag(xml, "EstimatedClosingDate"),
+         loanType: tag(xml, "LoanType")
+         },
+         borrower: {
+         name: tag(xml, "FullName"),
+         email: tag(xml, "BorrowerEmailAddress"),
+         taxpayerIdentifier: tag(xml, "TaxpayerIdentifier"),
+         creditScore: num(tag(xml, "CreditScoreValue"))
+         },
+         appraisalContact: tag(xml, "AppraisalContactName"),
+         lockStatus: tag(xml, "RateLockStatus"),
+         conditions: blocks(xml, "CONDITION").map((c) => ({ description: tag(c, "ConditionDescription"), status: tag(c, "ConditionStatus") })),
+         fees: blocks(xml, "FEE").map((f) => ({ feeType: tag(f, "FeeType"), amount: num(tag(f, "FeeActualPaymentAmount")), paidTo: tag(f, "FeePaidToName") }))
+         });
+         const feesToXml = (loanId, fees) => `<?xml version="1.0" encoding="UTF-8"?>
+         <MESSAGE MISMOVersionID="3.4" xmlns="http://www.mismo.org/residential/2009/schemas">
+         <DEAL_SETS><DEAL_SET><DEALS><DEAL><LOANS><LOAN>
+         <LOAN_IDENTIFIERS><LOAN_IDENTIFIER><LoanIdentifier>${escapeXml(loanId)}</LoanIdentifier></LOAN_IDENTIFIER></LOAN_IDENTIFIERS>
+         <FEES>${fees.map((fee) => `
+         <FEE><FEE_DETAIL>
+         <FeeType>${escapeXml(fee.feeType)}</FeeType>
+         <FeeActualPaymentAmount>${Number(fee.amount).toFixed(2)}</FeeActualPaymentAmount>
+         <FeePaidToName>${escapeXml(fee.paidTo ?? "")}</FeePaidToName>
+         </FEE_DETAIL></FEE>`).join("")}
+         </FEES>
+         </LOAN></LOANS></DEAL></DEALS></DEAL_SET></DEAL_SETS>
+         </MESSAGE>`;
+         module.exports = { parseLoan, feesToXml, escapeXml };
+         },
+         "roles.js": (module, exports, require) => {
+         const { timingSafeEqual } = require("node:crypto");
+         const ROLES = {
+         title: { label: "Title / Settlement", persona: "TITLE_VENDOR", codeEnv: "INVITE_TITLE" },
+         broker: { label: "TPO / Broker", persona: "TPO_BROKER", codeEnv: "INVITE_BROKER" },
+         appraisal: { label: "AMC / Appraisal", persona: "AMC_VENDOR", codeEnv: "INVITE_APPRAISAL" }
+         };
+         const safeEqual = (a, b) => {
+         const left = Buffer.from(String(a));
+         const right = Buffer.from(String(b));
+         return left.length === right.length && timingSafeEqual(left, right);
+         };
+         const roleFor = (env, role) => {
+         const config = ROLES[role];
+         const code = config && env[config.codeEnv];
+         return config && code ? { ...config, role, code } : null;
+         };
+         module.exports = { ROLES, roleFor, safeEqual };
+         },
+         "portal.js": (module, exports, require) => {
+         const FIELD_CATALOG = [
+         ["Property", "Street", "property.street", "STRING", '"123 Main St"'],
+         ["Property", "City", "property.city", "STRING", '"Irvine"'],
+         ["Property", "State", "property.state", "STRING", '"CA"'],
+         ["Property", "Postal code", "property.postalCode", "STRING", '"92618"'],
+         ["Loan terms", "Loan amount", "terms.loanAmount", "DECIMAL", "450000.00"],
+         ["Loan terms", "Note rate", "terms.noteRate", "DECIMAL", "6.875"],
+         ["Loan terms", "Estimated closing", "terms.estimatedClosingDate", "DATE", '"2026-11-20"'],
+         ["Milestones", "Current milestone", "milestone", "STRING", '"Underwriting"'],
+         ["Fees", "Fee type", "fees[].feeType", "STRING", '"TitleLenderCoveragePremium"'],
+         ["Fees", "Fee amount", "fees[].amount", "DECIMAL", "1250.00"],
+         ["Appraisal", "Appraisal contact", "appraisalContact", "STRING", '"Acme Appraisal Co"']
+         ];
+         const escapeHtml = (value) =>
+         String(value).replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]);
+         const renderPortal = ({ role, error } = {}) => {
+         const rows = FIELD_CATALOG.map(
+         ([category, name, jsonPath, type, sample]) =>
+         `<tr><td>${escapeHtml(category)}</td><td>${escapeHtml(name)}</td><td class="path">${escapeHtml(jsonPath)}</td><td>${type}</td><td><code>${escapeHtml(sample)}</code></td></tr>`
+         ).join("");
+         return `<!DOCTYPE html>
+         <html lang="en">
+         <head>
+         <meta charset="UTF-8">
+         <meta name="viewport" content="width=device-width, initial-scale=1">
+         <title>MeridianLink Mortgage Gateway Portal</title>
+         <style>
+         :root { color-scheme: dark; }
+         * { box-sizing: border-box; }
+         body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 24px; background: #0f172a; color: #e2e8f0; font: 15px/1.5 system-ui, -apple-system, Segoe UI, sans-serif; }
+         main { width: 100%; max-width: 860px; background: #1e293b; border: 1px solid #334155; border-radius: 14px; padding: 32px; }
+         h1 { margin: 0; font-size: 22px; letter-spacing: -0.02em; }
+         h2 { margin: 0 0 8px; font-size: 15px; }
+         p.sub { margin: 6px 0 24px; color: #94a3b8; font-size: 13px; }
+         label { display: block; margin: 16px 0 6px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: #94a3b8; font-weight: 600; }
+         input { width: 100%; padding: 10px 12px; border-radius: 8px; border: 1px solid #334155; background: #0f172a; color: #f8fafc; font: inherit; }
+         input:focus { outline: 2px solid #6366f1; outline-offset: 1px; }
+         button { width: 100%; margin-top: 20px; padding: 12px; border: 0; border-radius: 8px; background: #4f46e5; color: #fff; font: inherit; font-weight: 600; cursor: pointer; }
+         button:hover { background: #6366f1; }
+         button:disabled { opacity: 0.6; cursor: progress; }
+         button.secondary { width: auto; margin: 10px 0 0; padding: 8px 12px; background: #334155; font-size: 12px; }
+         .hint { margin: 6px 0 0; font-size: 12px; color: #64748b; }
+         .hidden { display: none; }
+         .error { margin-top: 16px; padding: 10px 12px; border-radius: 8px; background: #450a0a; border: 1px solid #7f1d1d; color: #fecaca; font-size: 13px; }
+         .notice { margin: 18px 0; padding: 14px; border-radius: 10px; background: #0f172a; border: 1px solid #334155; color: #cbd5e1; font-size: 13px; }
+         .invite { margin: 18px 0 4px; }
+         .badge { display: inline-block; padding: 4px 10px; border-radius: 999px; background: #312e81; color: #c7d2fe; font-size: 12px; font-weight: 600; }
+         .ok { margin-top: 20px; padding: 16px; border-radius: 10px; background: #0f172a; border: 1px solid #065f46; }
+         .ok h2 { margin: 0 0 8px; font-size: 14px; color: #34d399; }
+         .keyrow { display: flex; gap: 8px; margin-bottom: 14px; }
+         .keyrow input { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: #fde68a; font-size: 13px; }
+         .keyrow button { width: auto; margin: 0; padding: 0 14px; background: #334155; }
+         pre { margin: 0 0 4px; padding: 12px; background: #020617; border-radius: 8px; overflow-x: auto; font-size: 12px; color: #cbd5e1; }
+         a { color: #a5b4fc; font-size: 12px; }
+         .docs { margin-top: 28px; border-top: 1px solid #334155; padding-top: 20px; }
+         .table-wrap { overflow-x: auto; margin-top: 12px; }
+         table { width: 100%; border-collapse: collapse; font-size: 12px; }
+         th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #1e293b; white-space: nowrap; }
+         th { color: #94a3b8; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; }
+         td.path { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: #fde68a; }
+         code { background: #020617; padding: 1px 5px; border-radius: 4px; font-size: 12px; color: #c7d2fe; }
+         </style>
+         </head>
+         <body>
+         <main>
+         <h1>MeridianLink Mortgage Gateway</h1>
+         <p class="sub">Self-serve API access for title, broker, and appraisal partners. Your invite link locks your persona and the data you can see.</p>
+         ${error ? `<div class="error" role="alert">${escapeHtml(error)}</div>` : ""}
+         ${role
+         ? `<section class="invite">
+         <span class="badge">${escapeHtml(role.label)}</span>
+         <p class="hint">Persona locked to <code>${escapeHtml(role.persona)}</code>. Every response is masked to that persona.</p>
+         </section>
+         <form id="form">
+         <label for="tenantName">Company name</label>
+         <input id="tenantName" type="text" maxlength="100" placeholder="e.g. First American Title" required>
+         <label for="email">Developer email</label>
+         <input id="email" type="email" maxlength="254" placeholder="dev@firstam.com" required>
+         <button id="submit" type="submit">Generate API key</button>
+         </form>`
+         : `<div class="notice"><strong>Invite link required.</strong> Ask your lender for a role-scoped link such as <code>/portal?role=title&amp;code=...</code>. The link fixes your persona and permissions.</div>`}
+         <div id="error" class="error hidden" role="alert"></div>
+         <section id="result" class="ok hidden">
+         <h2>Key provisioned successfully</h2>
+         <p class="hint">Copy this key now. It is not stored in plaintext and will not be shown again.</p>
+         <div class="keyrow">
+         <input id="apiKey" readonly>
+         <button id="copy" type="button">Copy</button>
+         </div>
+         <label>Endpoints</label>
+         <pre id="endpoints"></pre>
+         <label for="curl">Verification cURL</label>
+         <pre id="curl"></pre>
+         <p><a href="#" id="again">Generate another key with this invite</a></p>
+         </section>
+         <section class="docs">
+         <h2>Common response paths</h2>
+         <p class="hint">These are the JSON paths the gateway emits. Anything outside your persona allowlist is not returned at all; custom MISMO fields come from <code>GET /v1/fields</code>.</p>
+         <div class="table-wrap">
+         <table>
+         <thead><tr><th>Category</th><th>Field</th><th>JSON path</th><th>Type</th><th>Sample</th></tr></thead>
+         <tbody>${rows}</tbody>
+         </table>
+         </div>
+         </section>
+         </main>
+         <script>
+         const $ = (id) => document.getElementById(id);
+         const show = (id) => $(id).classList.remove('hidden');
+         const hide = (id) => $(id).classList.add('hidden');
+         const lines = (items) => items.join(String.fromCharCode(10));
+         const form = $('form');
+         if (form) {
+         form.addEventListener('submit', async (event) => {
+         event.preventDefault();
+         hide('error');
+         const params = new URLSearchParams(location.search);
+         const tenantName = $('tenantName').value.trim();
+         const email = $('email').value.trim();
+         if (!tenantName || !email) {
+         $('error').textContent = 'Company name and developer email are required.';
+         return show('error');
+         }
+         const button = $('submit');
+         button.disabled = true;
+         button.textContent = 'Generating...';
+         try {
+         const res = await fetch(location.pathname, {
+         method: 'POST',
+         headers: { 'Content-Type': 'application/json' },
+         body: JSON.stringify({ tenantName, email, role: params.get('role'), code: params.get('code') })
+         });
+         const data = await res.json().catch(() => ({}));
+         if (!res.ok) throw new Error(data.error || 'Failed to generate key');
+         const base = location.origin;
+         $('apiKey').value = data.apiKey;
+         $('endpoints').textContent = lines([
+         'GET    ' + base + '/v1/loans/{loanId}',
+         'PATCH  ' + base + '/v1/loans/{loanId}/fees',
+         'GET    ' + base + '/v1/jobs/{jobId}',
+         'GET    ' + base + '/v1/fields?ids=11,646,CX.TITLE.STATUS'
+         ]);
+         $('curl').textContent = lines([
+         'curl -s "' + base + '/v1/loans/ML-998822" -H "x-api-key: ' + data.apiKey + '"',
+         'curl -s -X PATCH "' + base + '/v1/loans/ML-998822/fees" -H "x-api-key: ' + data.apiKey + '" -H "content-type: application/json" -d \\'{"fees":[{"feeType":"TitleLenderCoveragePremium","amount":1350}]}\\''
+         ]);
+         hide('form');
+         show('result');
+         } catch (err) {
+         $('error').textContent = err.message;
+         show('error');
+         } finally {
+         button.disabled = false;
+         button.textContent = 'Generate API key';
+         }
+         });
+         }
+         if ($('copy')) {
+         $('copy').addEventListener('click', async () => {
+         $('apiKey').select();
+         try { await navigator.clipboard.writeText($('apiKey').value); } catch { document.execCommand('copy'); }
+         $('copy').textContent = 'Copied';
+         setTimeout(() => { $('copy').textContent = 'Copy'; }, 1500);
+         });
+         }
+         if ($('again')) {
+         $('again').addEventListener('click', (event) => {
+         event.preventDefault();
+         location.reload();
+         });
+         }
+         </script>
+         </body>
+         </html>`;
+         };
+         module.exports = { renderPortal, FIELD_CATALOG };
+         },
+         "meridian.js": (module, exports, require) => {
+         function createMeridian({ baseUrl, username, password, passwordProvider, timeoutMs = 8000, fetchImpl = globalThis.fetch }) {
+         if (!baseUrl) throw new Error("MERIDIAN_BASE_URL is required");
+         let resolvedPassword = password;
+         const secret = async () => (resolvedPassword ??= (await passwordProvider?.()) || "");
+         const call = async (path, init = {}) => {
+         const authorization = `Basic ${Buffer.from(`${username}:${await secret()}`).toString("base64")}`;
+         const res = await fetchImpl(`${baseUrl.replace(/\/$/, "")}${path}`, {
+         ...init,
+         signal: AbortSignal.timeout(Number(timeoutMs) || 8000),
+         headers: { Authorization: authorization, ...init.headers }
+         });
+         return { status: res.status, body: await res.text() };
+         };
+         return {
+         getLoan: (loanId) => call(`/api/mismo/v3_4/loans/${encodeURIComponent(loanId)}`, { headers: { Accept: "application/xml" } }),
+         updateFees: (loanId, xml) =>
+         call(`/api/mismo/v3_4/loans/${encodeURIComponent(loanId)}`, {
+         method: "PATCH",
+         headers: { Accept: "application/json", "Content-Type": "application/xml" },
+         body: xml
+         }),
+         getFields: (ids) =>
+         call(`/api/mismo/v3_4/fields?ids=${encodeURIComponent(ids.join(","))}`, { headers: { Accept: "application/json" } })
+         };
+         }
+         module.exports = { createMeridian };
+         },
+         "writes.js": (module, exports, require) => {
+         const { feesToXml } = require("./mismo");
+         const { log } = require("./log");
+         const RETRYABLE = (status) => status === 423 || status === 429 || status >= 500;
+         const fail = (store, job, attempts, error, now) => store.putJob({ ...job, status: "FAILED", attempts, error, updatedAt: new Date(now()).toISOString() });
+         async function processWrite({ job, fees, meridian, store, attempts, maxAttempts = 5, now = Date.now }) {
+         if (!job) return log("WARN", "JOB_NOT_FOUND", { attempts });
+         if (job.status === "COMPLETED") return;
+         const updatedAt = () => new Date(now()).toISOString();
+         let response;
+         try {
+         response = await meridian.updateFees(job.loanId, feesToXml(job.loanId, fees));
+         } catch (err) {
+         log("WARN", "WRITE_TRANSPORT_ERROR", { jobId: job.jobId, loanId: job.loanId, attempts, message: err.message });
+         if (attempts >= maxAttempts) return void (await fail(store, job, attempts, err.message, now), log("ERROR", "WRITE_ATTEMPTS_EXHAUSTED", { jobId: job.jobId, attempts }));
+         await store.putJob({ ...job, status: "RETRYING", attempts, error: err.message, updatedAt: updatedAt() });
+         throw err;
+         }
+         if (response.status < 300) {
+         await store.putJob({ ...job, status: "COMPLETED", attempts, error: null, updatedAt: updatedAt() });
+         log("INFO", "WRITE_COMPLETED", { jobId: job.jobId, loanId: job.loanId, attempts });
+         return;
+         }
+         if (!RETRYABLE(response.status)) {
+         await fail(store, job, attempts, `upstream ${response.status}`, now);
+         log("ERROR", "WRITE_REJECTED", { jobId: job.jobId, loanId: job.loanId, status: response.status, attempts });
+         return;
+         }
+         if (attempts >= maxAttempts) {
+         await fail(store, job, attempts, `upstream still ${response.status} after ${maxAttempts} attempts`, now);
+         log("ERROR", "WRITE_ATTEMPTS_EXHAUSTED", { jobId: job.jobId, loanId: job.loanId, status: response.status, attempts });
+         return;
+         }
+         await store.putJob({ ...job, status: "RETRYING", attempts, error: `upstream ${response.status}`, updatedAt: updatedAt() });
+         log("WARN", "RECORD_LOCK_BACKOFF", { jobId: job.jobId, loanId: job.loanId, status: response.status, attempts });
+         throw new Error(`Retryable upstream status ${response.status}`);
+         }
+         module.exports = { processWrite };
+         },
+         "aws-store.js": (module, exports, require) => {
+         function createAwsStore(env = process.env) {
+         const { DynamoDBClient } = require("@aws-sdk/client-dynamodb");
+         const { DynamoDBDocumentClient, GetCommand, PutCommand } = require("@aws-sdk/lib-dynamodb");
+         const { SQSClient, SendMessageCommand } = require("@aws-sdk/client-sqs");
+         const { SecretsManagerClient, GetSecretValueCommand } = require("@aws-sdk/client-secrets-manager");
+         const { APIGatewayClient, CreateApiKeyCommand, CreateUsagePlanKeyCommand, DeleteApiKeyCommand } = require("@aws-sdk/client-api-gateway");
+         const ddb = DynamoDBDocumentClient.from(new DynamoDBClient({}));
+         const sqs = new SQSClient({});
+         const secrets = new SecretsManagerClient({});
+         const apiGateway = new APIGatewayClient({});
+         return {
+         async getSecret() {
+         const res = await secrets.send(new GetSecretValueCommand({ SecretId: env.MERIDIAN_SECRET_ARN }));
+         return { password: res.SecretString };
+         },
+         async getTenant(apiKeyId) {
+         const res = await ddb.send(new GetCommand({ TableName: env.TENANT_TABLE, Key: { apiKeyId } }));
+         return res.Item || null;
+         },
+         async putTenant(item) {
+         await ddb.send(new PutCommand({ TableName: env.TENANT_TABLE, Item: item }));
+         },
+         async getJob(jobId) {
+         const res = await ddb.send(new GetCommand({ TableName: env.JOB_TABLE, Key: { jobId } }));
+         return res.Item || null;
+         },
+         async putJob(item) {
+         await ddb.send(new PutCommand({ TableName: env.JOB_TABLE, Item: item }));
+         },
+         async enqueueWrite(message) {
+         await sqs.send(
+         new SendMessageCommand({
+         QueueUrl: env.WRITE_QUEUE_URL,
+         MessageBody: JSON.stringify(message),
+         MessageGroupId: message.loanId,
+         MessageDeduplicationId: message.jobId
+         })
+         );
+         },
+         async createApiKey({ tenantName }) {
+         const created = await apiGateway.send(
+         new CreateApiKeyCommand({
+         name: `tenant-${tenantName.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 40)}-${Date.now().toString(36)}`,
+         description: `MeridianLink gateway key for ${tenantName}`,
+         enabled: true,
+         generateDistinctId: true
+         })
+         );
+         try {
+         await apiGateway.send(new CreateUsagePlanKeyCommand({ usagePlanId: env.USAGE_PLAN_ID, keyId: created.id, keyType: "API_KEY" }));
+         } catch (err) {
+         await apiGateway.send(new DeleteApiKeyCommand({ apiKey: created.id })).catch(() => {});
+         throw err;
+         }
+         return { id: created.id, value: created.value };
+         }
+         };
+         }
+         module.exports = { createAwsStore };
+         },
+         };
+         const __cache = {};
+         function __require(id) {
+         if (__cache[id]) return __cache[id].exports;
+         if (!__defs[id]) throw new Error("Module not bundled: " + id);
+         const module = (__cache[id] = { exports: {} });
+         __defs[id](module, module.exports, (spec) =>
+         spec.startsWith(".") ? __require(spec.replace(/^\.\//, "").replace(/\.js$/, "") + ".js") : __nativeRequire(spec)
+         );
+         return module.exports;
+         }
+         module.exports = __require("lambda.js");
+
+  WriteEventSource:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      EventSourceArn: !GetAtt WriteQueue.Arn
+      FunctionName: !Ref GatewayFunction
+      BatchSize: 10
+      Enabled: true
+      FunctionResponseTypes:
+        - ReportBatchItemFailures
+      ScalingConfig:
+        MaximumConcurrency: 5
+
+  Api:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: !Sub "${AWS::StackName}-api"
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+
+  PortalResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref Api
+      ParentId: !GetAtt Api.RootResourceId
+      PathPart: portal
+
+  HealthResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref Api
+      ParentId: !GetAtt Api.RootResourceId
+      PathPart: health
+
+  ProxyResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref Api
+      ParentId: !GetAtt Api.RootResourceId
+      PathPart: "{proxy+}"
+
+  PortalGet:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref Api
+      ResourceId: !Ref PortalResource
+      HttpMethod: GET
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub "arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${AWS::StackName}-gateway/invocations"
+
+  PortalPost:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref Api
+      ResourceId: !Ref PortalResource
+      HttpMethod: POST
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub "arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${AWS::StackName}-gateway/invocations"
+
+  HealthGet:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref Api
+      ResourceId: !Ref HealthResource
+      HttpMethod: GET
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub "arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${AWS::StackName}-gateway/invocations"
+
+  ProxyAny:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref Api
+      ResourceId: !Ref ProxyResource
+      HttpMethod: ANY
+      AuthorizationType: NONE
+      ApiKeyRequired: true
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub "arn:${AWS::Partition}:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${AWS::StackName}-gateway/invocations"
+
+  ApiDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - PortalGet
+      - PortalPost
+      - HealthGet
+      - ProxyAny
+    Properties:
+      RestApiId: !Ref Api
+
+  ApiStage:
+    Type: AWS::ApiGateway::Stage
+    Properties:
+      RestApiId: !Ref Api
+      DeploymentId: !Ref ApiDeployment
+      StageName: prod
+
+  UsagePlan:
+    Type: AWS::ApiGateway::UsagePlan
+    Properties:
+      Description: Vendor usage plan (rate limit and daily quota)
+      ApiStages:
+        - ApiId: !Ref Api
+          Stage: !Ref ApiStage
+      Throttle:
+        RateLimit: 50
+        BurstLimit: 100
+      Quota:
+        Limit: 100000
+        Period: DAY
+
+  ApiPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !Ref GatewayFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub "arn:${AWS::Partition}:execute-api:${AWS::Region}:${AWS::AccountId}:${Api}/*/*"
+
+Outputs:
+  GatewayUrl:
+    Description: Base URL for vendor API calls.
+    Value: !Sub "https://${Api}.execute-api.${AWS::Region}.amazonaws.com/prod"
+  AdminPortalUrl:
+    Description: Role-invite API key portal.
+    Value: !Sub "https://${Api}.execute-api.${AWS::Region}.amazonaws.com/prod/portal"
+  HealthUrl:
+    Description: Unauthenticated health check.
+    Value: !Sub "https://${Api}.execute-api.${AWS::Region}.amazonaws.com/prod/health"
+  FieldsUrl:
+    Description: Field schema discovery endpoint.
+    Value: !Sub "https://${Api}.execute-api.${AWS::Region}.amazonaws.com/prod/v1/fields"
+  StaticEgressIp:
+    Description: Whitelist this IP with MeridianLink support for the integration.
+    Value: !Ref NatEip
+  WriteQueueUrl:
+    Description: FIFO queue that buffers MeridianLink writes.
+    Value: !Ref WriteQueue

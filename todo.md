@@ -3,13 +3,12 @@
 Single source of truth for work in progress. Append to `history.md` when an item changes state.
 Legend: `[ ]` pending · `[~]` in progress · `[x]` done · `[—]` deliberately deferred (YAGNI / blocked)
 
-## Phase 1 — Core Infrastructure (local MVP)
+## Phase 1 — Core Infrastructure
 
-- [x] Zero-dependency Node runtime, API-Gateway-shaped events (`src/app.js`, `src/server.js`)
-- [x] Local adapters: tenant/job store (`src/store.js`), FIFO write queue (`src/queue.js`), credentials from env (`src/meridian.js`)
+- [x] Zero-dependency Node runtime, API-Gateway-shaped events (`src/app.js`, `src/server.js`, `src/lambda.js`)
+- [x] Async storage interface with AWS adapter (`src/aws-store.js`) and in-memory dev adapter (`dev/memory-store.js`)
+- [x] FIFO write pipeline: SQS event source in AWS, drain runner locally (`src/writes.js`, `dev/local-runner.js`)
 - [x] Structured JSON logging standard (`src/log.js`)
-- [—] CloudFormation `template.yaml` + VPC/NAT/Elastic IP (needs AWS; cannot be verified here)
-- [—] `deploy.sh` CloudShell installer (depends on the unverified template)
 
 ## Phase 2 — Translation & Schema Masking
 
@@ -20,27 +19,35 @@ Legend: `[ ]` pending · `[~]` in progress · `[x]` done · `[—]` deliberately
 
 ## Phase 3 — Synchronous Read
 
-- [x] `GET /v1/loans/{id}` with API-key → tenant resolution, upstream passthrough, masking
-- [x] Upstream error mapping (404 loan, 423 locked, 502 unreachable)
+- [x] `GET /v1/loans/{id}` with `apiKeyId` → tenant resolution, upstream passthrough, masking
+- [x] Upstream error mapping (404 loan, 423 locked, 429 rate limit, 502/504 failures)
 - [x] `Cache-Control: private, max-age=15`
+- [—] Server-side read cache (rejected: the Meridian design forbids a local loan copy)
 
 ## Phase 4 — FIFO Write Pipeline
 
 - [x] `PATCH /v1/loans/{id}/fees` (and `PATCH /v1/loans/{id}`) → `202 ACCEPTED` + `jobId`
-- [x] Per-loan FIFO ordering (`MessageGroupId = loanId`), concurrency cap 10
-- [x] Retry with exponential backoff on `423`/`429`/`5xx`/transport errors, then `FAILED`
-- [x] `GET /v1/jobs/{jobId}` with tenant ownership check
+- [x] Per-loan FIFO ordering (`MessageGroupId = loanId`), Lambda concurrency cap 5, DLQ after 5 receives
+- [x] Retry classification: `423`/`429`/`5xx`/transport retried; permanent rejections `FAILED`
+- [x] `GET /v1/jobs/{jobId}` with tenant ownership (foreign jobs → `404`)
+- [x] Job TTL, no fee payload persisted in the job record
 
-## Phase 5 — SSR Admin Portal
+## Phase 5 — Self-Serve Onboarding (sister-project parity)
 
-- [x] `GET /portal` zero-build HTML portal (Tailwind CDN)
-- [x] `POST /portal` provisions scoped API key + role mapping, returns copy-paste cURL
-- [—] Portal authentication / invite links (open by design for MVP; documented in README)
+- [x] Role-scoped invite codes (`title`/`broker`/`appraisal`), timing-safe compare, fails closed
+- [x] `GET /portal?role=…&code=…` persona-locked form; invalid/mismatched invites rejected
+- [x] `POST /portal` provisions a scoped key and stores only `apiKeyId`
+- [x] Hardened portal: strict CSP, `frame-ancestors 'none'`, `X-Frame-Options: DENY`, inline CSS (no CDN)
+- [x] Common-field cheat sheet in the portal (JSON paths, links to `/v1/fields` for the rest)
+- [—] Single-use invite codes / revocation UI / admin dashboard (deferred; codes are rotatable per role)
 
-## Phase 6 — Verification & Distribution
+## Phase 6 — Packaging, Distribution & Verification
 
-- [x] `node:test` suite: translation, masking, read, write, retries, ownership, portal, HTTP smoke
-- [x] Mock MeridianLink Mortgage API (`mock/meridian.js` + `fixtures/loan.xml`) for local E2E
-- [x] Run the gateway locally and smoke-test every route over HTTP
-- [x] Commit + push to `origin/main`
-- [ ] Production verification on AWS (blocked: no AWS account / MeridianLink access)
+- [x] `scripts/build.js`: bundle `src/` → `dist/gateway.js`, inline into `template.yaml`, 51,200-byte guard, `--check`
+- [x] `infra/template.yaml`: VPC + NAT + static EIP, DynamoDB, SQS FIFO + DLQ, Secrets Manager, API Gateway usage plan, inline Lambda
+- [x] `deploy.sh` one-line CloudShell installer (prompts for Meridian creds, generates invite codes, prints invite links + egress IP)
+- [x] CI (`.github/workflows/ci.yml`): tests + template-sync on Node 20 and 24
+- [x] Tests: translation, masking, invites, schema cache, reads, writes/retries, ownership, `createDevGateway` HTTP e2e, template guards, executed inline bundle
+- [x] `npm run verify` green; committed and pushed
+- [—] Live AWS deployment + MeridianLink calls (blocked: no AWS account or vendor access)
+- [—] Static GitHub Pages landing page, `llms.txt`, `CONTRIBUTING.md` (deferred; not required for a working gateway)
