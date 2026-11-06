@@ -64,7 +64,7 @@ Legend: `[ ]` pending · `[~]` in progress · `[x]` done · `[—]` deliberately
 - [x] Community surfaces: `CONTRIBUTING.md`, `llms.txt`, GitHub Pages `index.html`, contributor invitations
 - [x] Community direction codified in `AGENTS.md` §0 (file issues, upstream fixes, recruit contributors)
 - [x] Static guard tests keep the issue/PR/contributor direction from rotting
-- [—] Live AWS deployment + MeridianLink calls (blocked: no AWS account or vendor access)
+- [—] Live AWS deployment + MeridianLink calls (blocked: no AWS account or vendor access; probed 2026-11-06: `aws` is not installed (`command not found`, exit 127), no `AWS_*` environment variables exist, `~/.aws` and `~/.config/aws` are absent, the repository records no stack or API URL, and CI has no deploy job. Document upload/download code is complete and shipped to `main` at `93d43e7`; only the AWS API deployment is blocked on account credentials)
 - [x] Guided issue forms: `.github/ISSUE_TEMPLATE/bug_report.yml` and `feature_improvement.yml` (sanitization fields required)
 - [x] Issue chooser config (`.github/ISSUE_TEMPLATE/config.yml`) links `CONTRIBUTING.md` and the support/issues surface
 - [x] PR template (`.github/pull_request_template.md`): actual verification, regression test, not-validated-against-tenant/deploy disclosure

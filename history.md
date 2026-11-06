@@ -4,6 +4,43 @@ Append-only. Newest entries at the top. Never rewrite past entries; add a correc
 
 ---
 
+## 2026-11-06 — AWS deployment probe: blocked on CLI and account credentials
+
+**Probe.** Checked whether this machine can deploy the template before asserting anything about a live API.
+Run from the repository root:
+
+```text
+$ command -v aws
+(no output)                       # exit 1
+$ aws --version
+bash: aws: command not found      # exit 127
+$ env | grep -o '^AWS_[A-Z_]*'
+(no output)
+$ ls -la "$HOME/.aws" "$HOME/.config/aws"
+ls: cannot access '/home/coreyb/.aws': No such file or directory
+ls: cannot access '/home/coreyb/.config/aws': No such file or directory
+$ aws sts get-caller-identity
+bash: aws: command not found      # exit 127
+$ aws cloudformation describe-stacks --stack-name MeridianLink-Mortgage-Gateway --region us-east-1
+bash: aws: command not found      # exit 127
+```
+
+Also checked: the repository contains no `execute-api`/`amazonaws.com` URL; `.github/workflows/ci.yml` has only
+a `verify` job (`npm test` and `node scripts/build.js --check`) with `permissions: contents: read`, so there is
+no deployment workflow and no OIDC role to deploy with. `deploy.sh` is a manual CloudShell installer that
+requires an authenticated AWS session, which this machine does not have.
+
+**Conclusion.** The AWS API cannot be deployed from this environment: there is no AWS CLI, no credential
+source, no deploy workflow, and no existing stack to discover or update. The document upload/list/download
+code is complete, tested, and shipped to `main` at `93d43e7` (tracker commit `690de49`), but no live AWS API
+exists to call. The only production surface is the GitHub Pages site, which was observed serving the updated
+document copy.
+
+**Not claimed.** No live AWS deployment, API Gateway invocation, or MeridianLink tenant call was performed or
+is claimed anywhere in this repository. The blocked state is recorded in `todo.md` and `AGENTS.md`.
+
+---
+
 ## 2026-11-06 — EDocs document upload, list, and download; template headroom restored
 
 **Why.** Document exchange is the highest-value broker workflow after conditions, and it was blocked by two

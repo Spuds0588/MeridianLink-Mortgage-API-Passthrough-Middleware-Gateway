@@ -216,7 +216,9 @@ the template deploys (executed in tests).
 
 **Not deployed to AWS from this environment** (no AWS account or MeridianLink access). The template is
 structurally tested and the embedded handler is executed locally, but real resource behavior,
-MeridianLink payload shapes, and the egress IP allowlist remain unverified. See `history.md`.
+MeridianLink payload shapes, and the egress IP allowlist remain unverified. A 2026-11-06 probe found no AWS
+CLI, no `AWS_*` credentials, no `~/.aws` profile, and no deployed stack or API URL, so the API deployment is
+blocked on account credentials. See `history.md`.
 
 Other known limits: invite codes are global per role (rotate via stack parameters; no single-use or
 revocation UI), one shared usage plan/quota for all tenants, no CORS (server-to-server expected), and

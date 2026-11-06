@@ -112,7 +112,7 @@ npm run verify    # build --check + tests (run before committing)
 ## 8. Deployment Reality
 
 - Target: API Gateway REST + usage plan, Lambda (Node 20, arm64) in a private subnet, NAT gateway with a static Elastic IP (MeridianLink's firewall allowlist), DynamoDB, SQS FIFO + DLQ, Secrets Manager, CloudFormation.
-- This machine has no AWS account, AWS CLI, or MeridianLink access. The template is logically tested (resources, wiring, size, embedded code, executed bundle) but **never deployed here**. `history.md` records that honestly.
+- This machine has no AWS account, AWS CLI, or MeridianLink access. A 2026-11-06 probe confirmed `aws` is not installed, no `AWS_*` credentials exist, and no stack/API URL is recorded, so deployment remains blocked on account credentials. The template is logically tested (resources, wiring, size, embedded code, executed bundle) but **never deployed here**. `history.md` records the exact probe output.
 - `scripts/build.js` minifies whitespace from the inlined deploy copy only (dist stays readable) to stay under CloudFormation's 51,200-byte direct-upload limit. Current headroom is about 2 KB; a new source change must keep at least 1 KB, which `test/template.test.js` enforces. Keep source formatted; never hand-edit `template.yaml`.
 - Local fakes prove routing, auth, masking, caching, and retry behavior — not AWS resource behavior or real MISMO payload shapes.
 
