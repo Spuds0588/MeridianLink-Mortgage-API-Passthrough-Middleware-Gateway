@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<MESSAGE MISMOVersionID="3.4" xmlns="http://www.mismo.org/residential/2009/schemas">
+  <DEAL_SETS>
+    <DEAL_SET>
+      <DEALS>
+        <DEAL>
+          <LOANS>
+            <LOAN>
+              <LOAN_IDENTIFIERS>
+                <LOAN_IDENTIFIER>
+                  <LoanIdentifier>ML-998822</LoanIdentifier>
+                </LOAN_IDENTIFIER>
+              </LOAN_IDENTIFIERS>
+              <LOAN_DETAIL>
+                <CurrentMilestoneName>Underwriting</CurrentMilestoneName>
+                <RateLockStatus>Locked</RateLockStatus>
+                <LoanType>Conventional</LoanType>
+              </LOAN_DETAIL>
+              <TERMS_OF_LOAN>
+                <LoanAmount>450000.00</LoanAmount>
+                <NoteRatePercent>6.875</NoteRatePercent>
+                <EstimatedClosingDate>2026-11-20</EstimatedClosingDate>
+              </TERMS_OF_LOAN>
+              <PROPERTY>
+                <AddressLineText>123 Main St</AddressLineText>
+                <CityName>Irvine</CityName>
+                <StateCode>CA</StateCode>
+                <PostalCode>92618</PostalCode>
+                <LegalDescription>Lot 14, Block 3, Tract 9982</LegalDescription>
+              </PROPERTY>
+              <PARTIES>
+                <PARTY>
+                  <FullName>Dana Borrower</FullName>
+                  <BorrowerEmailAddress>dana@example.com</BorrowerEmailAddress>
+                  <TaxpayerIdentifier>123-45-6789</TaxpayerIdentifier>
+                  <CreditScoreValue>742</CreditScoreValue>
+                </PARTY>
+                <PARTY>
+                  <AppraisalContactName>Acme Appraisal Co</AppraisalContactName>
+                </PARTY>
+              </PARTIES>
+              <CONDITIONS>
+                <CONDITION>
+                  <ConditionDescription>Updated title commitment</ConditionDescription>
+                  <ConditionStatus>Open</ConditionStatus>
+                </CONDITION>
+                <CONDITION>
+                  <ConditionDescription>Appraisal review</ConditionDescription>
+                  <ConditionStatus>Satisfied</ConditionStatus>
+                </CONDITION>
+              </CONDITIONS>
+              <FEES>
+                <FEE>
+                  <FEE_DETAIL>
+                    <FeeType>TitleLenderCoveragePremium</FeeType>
+                    <FeeActualPaymentAmount>1250.00</FeeActualPaymentAmount>
+                    <FeePaidToName>First American Title</FeePaidToName>
+                  </FEE_DETAIL>
+                </FEE>
+                <FEE>
+                  <FEE_DETAIL>
+                    <FeeType>SettlementClosingFee</FeeType>
+                    <FeeActualPaymentAmount>600.00</FeeActualPaymentAmount>
+                    <FeePaidToName>First American Title</FeePaidToName>
+                  </FEE_DETAIL>
+                </FEE>
+              </FEES>
+            </LOAN>
+          </LOANS>
+        </DEAL>
+      </DEALS>
+    </DEAL_SET>
+  </DEAL_SETS>
+</MESSAGE>
