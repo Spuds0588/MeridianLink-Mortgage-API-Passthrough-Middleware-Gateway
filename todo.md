@@ -33,6 +33,7 @@ Legend: `[ ]` pending · `[~]` in progress · `[x]` done · `[—]` deliberately
 - [x] Job TTL, no fee payload persisted in the job record
 - [x] Broker capability audit (2026-11-06): partial 1003 read, fee-only writes, no document or condition writes
 - [x] `PATCH /v1/loans/{id}` returns `501` instead of acting as an undocumented fees alias
+- [x] Fee writes reject the read-only `AMC_VENDOR` persona before any job is created (commit `4aa360e`); title and broker personas keep write access
 - [—] Full 1003 read/write, borrower document upload, and condition responses (blocked: needs sanitized MeridianLink MISMO samples plus confirmed vendor endpoints; inventing shapes would violate the no-guess rule)
 - [—] Per-loan organization scoping (blocked: the MISMO samples carry no loan-to-organization field; until then any valid key can request any loan ID the shared credential reaches)
 

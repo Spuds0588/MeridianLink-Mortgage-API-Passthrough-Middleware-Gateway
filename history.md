@@ -4,6 +4,27 @@ Append-only. Newest entries at the top. Never rewrite past entries; add a correc
 
 ---
 
+## 2026-11-06 — Close the AMC fee-write authorization gap
+
+**Finding.** `enqueueWrite` authorized any valid tenant without checking the persona, so an `AMC_VENDOR`
+key could queue fee writes for any loan. The appraisal allowlist deliberately omits fees, so those writes
+produced records the caller could not read or verify, from a persona scoped to appraisal data only.
+
+**Changed**
+
+- `src/app.js`: fee writes now require `TITLE_VENDOR` or `TPO_BROKER`; any other persona fails closed with
+  `403 {"error":"Persona cannot write fees"}` before the body is parsed or a job is written. One line, no new
+  configuration, no new storage.
+- `test/gateway.test.js`: an appraisal key receives `403` and `store.queue.length` stays `0`, proving the
+  rejection happens before enqueue.
+- `README.md` and `llms.txt`: state the persona restriction so integrations do not discover it at runtime.
+- `template.yaml`: regenerated at 51,035 bytes, still under the 51,200-byte direct-upload limit.
+
+**Verified locally.** `npm run verify`: 51 tests, 51 pass, 0 fail. Post-push fresh-clone reproduction and the
+live Pages `llms.txt` check are run in the same turn and reported in the session summary.
+
+---
+
 ## 2026-11-06 — Correct the implied broker loan isolation claim
 
 **Finding.** The audit that accompanied the broker write-scope change exposed a second gap: tenant
