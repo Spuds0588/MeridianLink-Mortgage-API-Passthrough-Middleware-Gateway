@@ -74,8 +74,8 @@ curl -s "$GATEWAY_URL/v1/jobs/$JOB_ID" -H "x-api-key: $KEY"
   persona-permitted extras. No vendor-side XML parsing.
 - **Persona schema masking** — deny-by-default allowlists per role; NPI is pruned before the response
   leaves the gateway. Unknown personas fail closed.
-- **Async writes** — `PATCH /v1/loans/{id}/fees` validates and enqueues to SQS FIFO (grouped by loan),
-  returns `202` + job ID, retries MeridianLink record locks with backoff, and dead-letters after 5 attempts.
+- **Async writes** — fee and condition updates validate and enqueue to SQS FIFO (grouped by loan), return
+  `202` + job ID, retry MeridianLink record locks with backoff, and dead-letter after 5 attempts.
 - **Role-scoped self-serve onboarding** — the lender shares a title, broker, or appraisal invite link;
   the vendor enters a company name and developer email; the gateway locks the key to that role's persona
   server-side. No admin token and no per-vendor admin work.
@@ -98,6 +98,7 @@ curl -s "$GATEWAY_URL/v1/jobs/$JOB_ID" -H "x-api-key: $KEY"
 | `GET` | `/v1/loans/{id}` | `x-api-key` | masked loan JSON |
 | `PATCH` | `/v1/loans/{id}/fees` body `{ "fees": [{ "feeType": "…", "amount": 1350 }] }` | `x-api-key` | `202 { status, jobId, loanId, statusUrl }` |
 | `PATCH` | `/v1/loans/{id}` | `x-api-key` | `501` — only fee writes are implemented |
+| `POST` | `/v1/loans/{id}/conditions` body `{ "conditions": [{ "description": "…", "status": "Satisfied" }] }` | `x-api-key` | `202 { status, jobId, loanId, statusUrl }` (broker persona) |
 | `GET` | `/v1/jobs/{id}` | `x-api-key` | `{ jobId, loanId, status, attempts, createdAt, updatedAt, error }` |
 
 Job statuses: `PENDING` → `RETRYING` → `COMPLETED` / `FAILED`. Fee arrays are capped at 100 items. Fee writes are accepted only from `TITLE_VENDOR` and `TPO_BROKER`; an `AMC_VENDOR` key receives `403`.
@@ -129,12 +130,12 @@ borrower documents, or condition responses. This is the current contract, assert
 | Full 1003 read | loan read | **Partial** — no employment, income, assets, liabilities, or declarations |
 | Full 1003 write | `PATCH /v1/loans/{id}` | **Not implemented** — returns `501` |
 | Borrower document upload | none | **Not implemented** |
-| Respond to or update conditions | none | **Not implemented** |
+| Submit or update conditions | `POST /v1/loans/{id}/conditions` | Supported — broker persona; matched by description |
 
-SSN and credit score remain excluded for every persona by design. The missing write paths are blocked on
-sanitized MeridianLink MISMO samples: the gateway does not invent vendor tag names, document transport, or
-condition-merge semantics. A broker key still cannot pass a full 1003 through this API, so integrations that
-need that must wait for a contributed shape rather than assume it works.
+SSN and credit score remain excluded for every persona by design. Condition submission follows MeridianLink's
+documented description-matched update behavior, so only changed conditions need to be sent. A full 1003 and
+borrower document upload are still blocked on sanitized MISMO shapes and the EDocs SOAP transport; a broker
+key cannot pass either through this API yet.
 
 ## Architecture
 

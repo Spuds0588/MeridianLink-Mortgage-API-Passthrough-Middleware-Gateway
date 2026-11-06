@@ -16,7 +16,7 @@ function createMeridian({ baseUrl, username, password, passwordProvider, timeout
 
   return {
     getLoan: (loanId) => call(`/api/mismo/v3_4/loans/${encodeURIComponent(loanId)}`, { headers: { Accept: "application/xml" } }),
-    updateFees: (loanId, xml) =>
+    updateLoan: (loanId, xml) =>
       call(`/api/mismo/v3_4/loans/${encodeURIComponent(loanId)}`, {
         method: "PATCH",
         headers: { Accept: "application/json", "Content-Type": "application/xml" },

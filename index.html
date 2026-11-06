@@ -62,7 +62,7 @@
         {
           "@type": "Question",
           "name": "Can a broker submit a full 1003, upload documents, or respond to conditions?",
-          "acceptedAnswer": { "@type": "Answer", "text": "Not yet. Broker keys read identity, property, terms, conditions, and lock status, and can queue fee updates. Full 1003 sections, borrower document upload, and condition responses have no write path: PATCH /v1/loans/{id} returns 501, and document or condition routes are not implemented. Adding them needs sanitized MeridianLink MISMO samples." }
+          "acceptedAnswer": { "@type": "Answer", "text": "Partly. Broker keys read identity, property, terms, conditions, and lock status, queue fee updates, and submit condition updates through POST /v1/loans/{id}/conditions, which MeridianLink matches by description. Full 1003 sections and borrower document upload have no write path: PATCH /v1/loans/{id} returns 501 and document routes are not implemented." }
         },
         {
           "@type": "Question",
@@ -319,7 +319,7 @@ npm run build     # regenerate dist/gateway.js and template.yaml</code></pre>
       </details>
       <details>
         <summary>Can a broker submit a full 1003, upload borrower documents, or respond to conditions?</summary>
-        <p>Not yet. Broker keys can read identity, property, terms, conditions, and lock status, and can queue fee updates. Full 1003 sections (employment, income, assets, liabilities, declarations), borrower document upload, and condition responses have no write path: <code>PATCH /v1/loans/&#123;id&#125;</code> returns <code>501</code>, and document or condition routes are not implemented. Adding them needs sanitized MeridianLink MISMO samples, because the gateway will not invent vendor shapes.</p>
+        <p>Partly. Broker keys can read identity, property, terms, conditions, and lock status, queue fee updates, and submit condition updates through <code>POST /v1/loans/&#123;id&#125;/conditions</code>; MeridianLink matches conditions by description, so only the changed rows need to be sent. Full 1003 sections and borrower document upload still have no write path: <code>PATCH /v1/loans/&#123;id&#125;</code> returns <code>501</code>, and document routes are not implemented.</p>
       </details>
       <details>
         <summary>Why is the invite model role-scoped instead of open?</summary>

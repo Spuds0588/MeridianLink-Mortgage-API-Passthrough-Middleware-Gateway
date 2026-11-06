@@ -32,38 +32,29 @@ const renderPortal = ({ role, error } = {}) => {
 <style>
   :root { color-scheme: dark; }
   * { box-sizing: border-box; }
-  body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 24px; background: #0f172a; color: #e2e8f0; font: 15px/1.5 system-ui, -apple-system, Segoe UI, sans-serif; }
-  main { width: 100%; max-width: 860px; background: #1e293b; border: 1px solid #334155; border-radius: 14px; padding: 32px; }
-  h1 { margin: 0; font-size: 22px; letter-spacing: -0.02em; }
+  body { margin: 0; padding: 20px; background: #0f172a; color: #e2e8f0; font: 15px/1.5 system-ui, sans-serif; }
+  main { max-width: 860px; margin: auto; padding: 24px; background: #1e293b; border: 1px solid #334155; border-radius: 12px; }
+  h1 { margin: 0; font-size: 21px; }
   h2 { margin: 0 0 8px; font-size: 15px; }
-  p.sub { margin: 6px 0 24px; color: #94a3b8; font-size: 13px; }
-  label { display: block; margin: 16px 0 6px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: #94a3b8; font-weight: 600; }
-  input { width: 100%; padding: 10px 12px; border-radius: 8px; border: 1px solid #334155; background: #0f172a; color: #f8fafc; font: inherit; }
-  input:focus { outline: 2px solid #6366f1; outline-offset: 1px; }
-  button { width: 100%; margin-top: 20px; padding: 12px; border: 0; border-radius: 8px; background: #4f46e5; color: #fff; font: inherit; font-weight: 600; cursor: pointer; }
-  button:hover { background: #6366f1; }
-  button:disabled { opacity: 0.6; cursor: progress; }
-  button.secondary { width: auto; margin: 10px 0 0; padding: 8px 12px; background: #334155; font-size: 12px; }
-  .hint { margin: 6px 0 0; font-size: 12px; color: #64748b; }
+  p.sub, .hint { margin: 6px 0 16px; color: #94a3b8; font-size: 13px; }
+  label { display: block; margin: 14px 0 6px; font-size: 11px; text-transform: uppercase; color: #94a3b8; }
+  input { width: 100%; padding: 9px 10px; border: 1px solid #334155; border-radius: 8px; background: #0f172a; color: #f8fafc; font: inherit; }
+  button { margin-top: 14px; padding: 9px 12px; border: 0; border-radius: 8px; background: #4f46e5; color: #fff; font: inherit; font-weight: 600; cursor: pointer; }
   .hidden { display: none; }
-  .error { margin-top: 16px; padding: 10px 12px; border-radius: 8px; background: #450a0a; border: 1px solid #7f1d1d; color: #fecaca; font-size: 13px; }
-  .notice { margin: 18px 0; padding: 14px; border-radius: 10px; background: #0f172a; border: 1px solid #334155; color: #cbd5e1; font-size: 13px; }
-  .invite { margin: 18px 0 4px; }
-  .badge { display: inline-block; padding: 4px 10px; border-radius: 999px; background: #312e81; color: #c7d2fe; font-size: 12px; font-weight: 600; }
-  .ok { margin-top: 20px; padding: 16px; border-radius: 10px; background: #0f172a; border: 1px solid #065f46; }
-  .ok h2 { margin: 0 0 8px; font-size: 14px; color: #34d399; }
-  .keyrow { display: flex; gap: 8px; margin-bottom: 14px; }
-  .keyrow input { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: #fde68a; font-size: 13px; }
-  .keyrow button { width: auto; margin: 0; padding: 0 14px; background: #334155; }
-  pre { margin: 0 0 4px; padding: 12px; background: #020617; border-radius: 8px; overflow-x: auto; font-size: 12px; color: #cbd5e1; }
+  .error { margin-top: 14px; padding: 9px 11px; border-radius: 8px; background: #450a0a; color: #fecaca; font-size: 13px; }
+  .notice, .ok, .invite { margin: 14px 0; padding: 12px; background: #0f172a; border: 1px solid #334155; border-radius: 8px; font-size: 13px; }
+  .keyrow { display: flex; gap: 8px; margin-bottom: 12px; }
+  .keyrow button { width: auto; margin: 0; }
+  pre { margin: 0 0 4px; padding: 10px; overflow-x: auto; background: #020617; border-radius: 8px; font-size: 12px; }
   a { color: #a5b4fc; font-size: 12px; }
-  .docs { margin-top: 28px; border-top: 1px solid #334155; padding-top: 20px; }
-  .table-wrap { overflow-x: auto; margin-top: 12px; }
+  .docs { margin-top: 20px; padding-top: 16px; }
+  .table-wrap { overflow-x: auto; }
   table { width: 100%; border-collapse: collapse; font-size: 12px; }
-  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #1e293b; white-space: nowrap; }
-  th { color: #94a3b8; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; }
-  td.path { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: #fde68a; }
-  code { background: #020617; padding: 1px 5px; border-radius: 4px; font-size: 12px; color: #c7d2fe; }
+  th, td { padding: 7px 9px; text-align: left; border-bottom: 1px solid #1e293b; }
+  th { color: #94a3b8; font-size: 11px; text-transform: uppercase; }
+  td.path { color: #fde68a; }
+  td.path, code, pre { font-family: ui-monospace, Menlo, monospace; }
+  code { padding: 1px 4px; background: #020617; border-radius: 4px; color: #c7d2fe; }
 </style>
 </head>
 <body>

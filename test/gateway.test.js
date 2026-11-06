@@ -214,7 +214,7 @@ test("PATCH fees enqueues a job and the worker completes it", async (t) => {
   assert.match(accepted.jobId, /^job_/);
   assert.equal(accepted.statusUrl, `/v1/jobs/${accepted.jobId}`);
   assert.equal(store.queue.length, 1);
-  assert.equal(store.queue[0].fees.length, 1);
+  assert.match(store.queue[0].mismo, /<FeeType>TitleLenderCoveragePremium<\/FeeType>/);
 
   const pending = JSON.parse((await call("GET", accepted.statusUrl, { apiKeyId })).body);
   assert.equal(pending.status, "PENDING");
@@ -329,6 +329,37 @@ test("broker writes are limited to fees; 1003, document and condition writes fai
     body: { fees: [{ feeType: "BrokerCompensation", amount: 500 }] }
   });
   assert.equal(fees.statusCode, 202);
+});
+
+test("broker submits conditions through the FIFO queue", async (t) => {
+  const { call, runner, store, mock, tenantKey } = await setup(t);
+  const broker = await tenantKey({ role: "broker", code: INVITES.broker, tenantName: "Acme Brokers", email: "dev@acme.test" });
+
+  const res = await call("POST", "/v1/loans/ML-998822/conditions", {
+    apiKeyId: broker.apiKeyId,
+    body: { conditions: [{ description: "Updated title commitment", status: "Satisfied" }] }
+  });
+  assert.equal(res.statusCode, 202);
+  assert.match(store.queue[0].mismo, /<ConditionStatus>Satisfied<\/ConditionStatus>/);
+
+  await runner.drain();
+  const job = JSON.parse((await call("GET", `/v1/jobs/${JSON.parse(res.body).jobId}`, { apiKeyId: broker.apiKeyId })).body);
+  assert.equal(job.status, "COMPLETED");
+  assert.match(mock.state.updates[0].body, /<ConditionDescription>Updated title commitment<\/ConditionDescription>/);
+});
+
+test("condition submission is broker-only and validated", async (t) => {
+  const { call, tenantKey } = await setup(t);
+  const broker = await tenantKey({ role: "broker", code: INVITES.broker, tenantName: "Acme Brokers", email: "dev@acme.test" });
+  const title = await tenantKey();
+  const post = (apiKeyId, body) => call("POST", "/v1/loans/ML-998822/conditions", { apiKeyId, body });
+
+  assert.equal((await post(title.apiKeyId, { conditions: [{ description: "X", status: "Open" }] })).statusCode, 403);
+  assert.equal((await post(broker.apiKeyId, {})).statusCode, 400);
+  assert.equal((await post(broker.apiKeyId, { conditions: [] })).statusCode, 400);
+  assert.equal((await post(broker.apiKeyId, { conditions: [{ description: "", status: "Open" }] })).statusCode, 400);
+  assert.equal((await post(broker.apiKeyId, { conditions: [{ description: "X", status: 7 }] })).statusCode, 400);
+  assert.equal((await call("GET", "/v1/loans/ML-998822/conditions", { apiKeyId: broker.apiKeyId })).statusCode, 405);
 });
 
 test("appraisal persona cannot write fees", async (t) => {

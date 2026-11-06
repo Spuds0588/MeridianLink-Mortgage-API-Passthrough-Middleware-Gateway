@@ -1,5 +1,4 @@
 /** Shared write-delivery logic used by the SQS worker and the local drain runner. */
-const { feesToXml } = require("./mismo");
 const { log } = require("./log");
 
 const RETRYABLE = (status) => status === 423 || status === 429 || status >= 500;
@@ -11,14 +10,14 @@ const fail = (store, job, attempts, error, now) => store.putJob({ ...job, status
  * Attempts one fee write. Returns normally when the job reached a terminal state;
  * throws for a retryable failure so SQS (or the local runner) redelivers it.
  */
-async function processWrite({ job, fees, meridian, store, attempts, maxAttempts = 5, now = Date.now }) {
+async function processWrite({ job, mismo, meridian, store, attempts, maxAttempts = 5, now = Date.now }) {
   if (!job) return log("WARN", "JOB_NOT_FOUND", { attempts });
   if (job.status === "COMPLETED") return;
 
   const updatedAt = () => new Date(now()).toISOString();
   let response;
   try {
-    response = await meridian.updateFees(job.loanId, feesToXml(job.loanId, fees));
+    response = await meridian.updateLoan(job.loanId, mismo);
   } catch (err) {
     log("WARN", "WRITE_TRANSPORT_ERROR", { jobId: job.jobId, loanId: job.loanId, attempts, message: err.message });
     if (attempts >= maxAttempts) return void (await fail(store, job, attempts, err.message, now), log("ERROR", "WRITE_ATTEMPTS_EXHAUSTED", { jobId: job.jobId, attempts }));

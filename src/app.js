@@ -2,7 +2,7 @@
 const { randomUUID } = require("node:crypto");
 const { log } = require("./log");
 const { mask } = require("./mask");
-const { parseLoan } = require("./mismo");
+const { parseLoan, feesToXml, conditionsToXml } = require("./mismo");
 const { roleFor, safeEqual } = require("./roles");
 const { renderPortal } = require("./portal");
 
@@ -54,6 +54,20 @@ const validFees = (fees) =>
       Number.isFinite(fee.amount) &&
       fee.amount >= 0 &&
       (fee.paidTo === undefined || (typeof fee.paidTo === "string" && fee.paidTo.length <= 200))
+  );
+
+const validConditions = (conditions) =>
+  Array.isArray(conditions) &&
+  conditions.length > 0 &&
+  conditions.length <= MAX_IDS &&
+  conditions.every(
+    (condition) =>
+      typeof condition?.description === "string" &&
+      condition.description.trim().length > 0 &&
+      condition.description.length <= 200 &&
+      typeof condition?.status === "string" &&
+      condition.status.trim().length > 0 &&
+      condition.status.length <= 50
   );
 
 function createApp({ store, meridian, env = process.env, now = () => Date.now() }) {
@@ -136,10 +150,12 @@ function createApp({ store, meridian, env = process.env, now = () => Date.now() 
     return json(200, masked, { "Cache-Control": "private, max-age=15" });
   }
 
-  async function enqueueWrite(event, apiKeyId, loanId) {
+  async function enqueueWrite(event, apiKeyId, loanId, kind = "fees") {
     const tenant = await tenantFor(apiKeyId);
     if (!tenant) return error(403, "Unauthorized tenant mapping");
-    if (!["TITLE_VENDOR", "TPO_BROKER"].includes(tenant.persona)) return error(403, "Persona cannot write fees");
+    if (kind === "conditions" ? tenant.persona !== "TPO_BROKER" : !["TITLE_VENDOR", "TPO_BROKER"].includes(tenant.persona)) {
+      return error(403, `Persona cannot ${kind === "conditions" ? "submit conditions" : "write fees"}`);
+    }
 
     let payload;
     try {
@@ -147,8 +163,11 @@ function createApp({ store, meridian, env = process.env, now = () => Date.now() 
     } catch {
       return error(400, "Invalid JSON body");
     }
-    if (!validFees(payload?.fees)) {
-      return error(400, "Body must contain a non-empty fees array (max 100) of { feeType, amount }");
+    const same = kind === "conditions"
+      ? validConditions(payload?.conditions) && conditionsToXml(loanId, payload.conditions)
+      : validFees(payload?.fees) && feesToXml(loanId, payload.fees);
+    if (!same) {
+      return error(400, `Body must contain a non-empty ${kind} array (max 100)`);
     }
 
     const createdAt = new Date(now()).toISOString();
@@ -168,14 +187,14 @@ function createApp({ store, meridian, env = process.env, now = () => Date.now() 
     await store.putJob(job);
 
     try {
-      await store.enqueueWrite({ jobId: job.jobId, loanId, fees: payload.fees });
+      await store.enqueueWrite({ jobId: job.jobId, loanId, mismo: same });
     } catch (err) {
       await store.putJob({ ...job, status: "FAILED", error: "Queue unavailable", updatedAt: new Date(now()).toISOString() });
       log("ERROR", "WRITE_ENQUEUE_FAILED", { jobId: job.jobId, loanId, message: err.message });
       return error(503, "Write queue unavailable");
     }
 
-    log("INFO", "WRITE_ENQUEUED", { jobId: job.jobId, loanId, tenantName: tenant.tenantName, feeCount: payload.fees.length });
+    log("INFO", "WRITE_ENQUEUED", { jobId: job.jobId, loanId, tenantName: tenant.tenantName, kind });
     return json(202, { status: "ACCEPTED", jobId: job.jobId, loanId, statusUrl: `/v1/jobs/${job.jobId}` });
   }
 
@@ -271,6 +290,10 @@ function createApp({ store, meridian, env = process.env, now = () => Date.now() 
       if ((match = /^\/v1\/loans\/([^/]+)\/fees$/.exec(path))) {
         if (method !== "PATCH") return error(405, "Method not allowed");
         return await enqueueWrite(event, apiKeyId, decode(match[1]));
+      }
+      if ((match = /^\/v1\/loans\/([^/]+)\/conditions$/.exec(path))) {
+        if (method !== "POST") return error(405, "Method not allowed");
+        return await enqueueWrite(event, apiKeyId, decode(match[1]), "conditions");
       }
       if ((match = /^\/v1\/loans\/([^/]+)$/.exec(path))) {
         const loanId = decode(match[1]);

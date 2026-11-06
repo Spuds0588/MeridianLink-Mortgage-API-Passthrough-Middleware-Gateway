@@ -19,7 +19,7 @@ function createHandler({ store, env = process.env, meridian, now = () => Date.no
   };
   const lazyMeridian = {
     getLoan: (loanId) => getClient().getLoan(loanId),
-    updateFees: (loanId, xml) => getClient().updateFees(loanId, xml),
+    updateLoan: (loanId, xml) => getClient().updateLoan(loanId, xml),
     getFields: (ids) => getClient().getFields(ids)
   };
 
@@ -33,7 +33,7 @@ function createHandler({ store, env = process.env, meridian, now = () => Date.no
       try {
         const message = JSON.parse(record.body || "{}");
         jobId = message.jobId;
-        await processWrite({ job: await store.getJob(message.jobId), fees: message.fees, meridian: lazyMeridian, store, attempts, now });
+        await processWrite({ job: await store.getJob(message.jobId), mismo: message.mismo, meridian: lazyMeridian, store, attempts, now });
       } catch (err) {
         log("WARN", "WRITE_RETRY_SCHEDULED", { jobId, messageId: record.messageId, attempts, message: err.message });
         batchItemFailures.push({ itemIdentifier: record.messageId });

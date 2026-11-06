@@ -292,7 +292,7 @@ Resources:
          };
          const lazyMeridian = {
          getLoan: (loanId) => getClient().getLoan(loanId),
-         updateFees: (loanId, xml) => getClient().updateFees(loanId, xml),
+         updateLoan: (loanId, xml) => getClient().updateLoan(loanId, xml),
          getFields: (ids) => getClient().getFields(ids)
          };
          const app = createApp({ store, meridian: lazyMeridian, env, now });
@@ -304,7 +304,7 @@ Resources:
          try {
          const message = JSON.parse(record.body || "{}");
          jobId = message.jobId;
-         await processWrite({ job: await store.getJob(message.jobId), fees: message.fees, meridian: lazyMeridian, store, attempts, now });
+         await processWrite({ job: await store.getJob(message.jobId), mismo: message.mismo, meridian: lazyMeridian, store, attempts, now });
          } catch (err) {
          log("WARN", "WRITE_RETRY_SCHEDULED", { jobId, messageId: record.messageId, attempts, message: err.message });
          batchItemFailures.push({ itemIdentifier: record.messageId });
@@ -331,7 +331,7 @@ Resources:
          const { randomUUID } = require("node:crypto");
          const { log } = require("./log");
          const { mask } = require("./mask");
-         const { parseLoan } = require("./mismo");
+         const { parseLoan, feesToXml, conditionsToXml } = require("./mismo");
          const { roleFor, safeEqual } = require("./roles");
          const { renderPortal } = require("./portal");
          const MAX_IDS = 100;
@@ -378,6 +378,19 @@ Resources:
          Number.isFinite(fee.amount) &&
          fee.amount >= 0 &&
          (fee.paidTo === undefined || (typeof fee.paidTo === "string" && fee.paidTo.length <= 200))
+         );
+         const validConditions = (conditions) =>
+         Array.isArray(conditions) &&
+         conditions.length > 0 &&
+         conditions.length <= MAX_IDS &&
+         conditions.every(
+         (condition) =>
+         typeof condition?.description === "string" &&
+         condition.description.trim().length > 0 &&
+         condition.description.length <= 200 &&
+         typeof condition?.status === "string" &&
+         condition.status.trim().length > 0 &&
+         condition.status.length <= 50
          );
          function createApp({ store, meridian, env = process.env, now = () => Date.now() }) {
          if (!store) throw new Error("createApp requires a store");
@@ -445,18 +458,23 @@ Resources:
          log("INFO", "SCHEMA_MASKING_APPLIED", { loanId, persona: tenant.persona });
          return json(200, masked, { "Cache-Control": "private, max-age=15" });
          }
-         async function enqueueWrite(event, apiKeyId, loanId) {
+         async function enqueueWrite(event, apiKeyId, loanId, kind = "fees") {
          const tenant = await tenantFor(apiKeyId);
          if (!tenant) return error(403, "Unauthorized tenant mapping");
-         if (!["TITLE_VENDOR", "TPO_BROKER"].includes(tenant.persona)) return error(403, "Persona cannot write fees");
+         if (kind === "conditions" ? tenant.persona !== "TPO_BROKER" : !["TITLE_VENDOR", "TPO_BROKER"].includes(tenant.persona)) {
+         return error(403, `Persona cannot ${kind === "conditions" ? "submit conditions" : "write fees"}`);
+         }
          let payload;
          try {
          payload = JSON.parse(event.body || "");
          } catch {
          return error(400, "Invalid JSON body");
          }
-         if (!validFees(payload?.fees)) {
-         return error(400, "Body must contain a non-empty fees array (max 100) of { feeType, amount }");
+         const same = kind === "conditions"
+         ? validConditions(payload?.conditions) && conditionsToXml(loanId, payload.conditions)
+         : validFees(payload?.fees) && feesToXml(loanId, payload.fees);
+         if (!same) {
+         return error(400, `Body must contain a non-empty ${kind} array (max 100)`);
          }
          const createdAt = new Date(now()).toISOString();
          const job = {
@@ -474,13 +492,13 @@ Resources:
          };
          await store.putJob(job);
          try {
-         await store.enqueueWrite({ jobId: job.jobId, loanId, fees: payload.fees });
+         await store.enqueueWrite({ jobId: job.jobId, loanId, mismo: same });
          } catch (err) {
          await store.putJob({ ...job, status: "FAILED", error: "Queue unavailable", updatedAt: new Date(now()).toISOString() });
          log("ERROR", "WRITE_ENQUEUE_FAILED", { jobId: job.jobId, loanId, message: err.message });
          return error(503, "Write queue unavailable");
          }
-         log("INFO", "WRITE_ENQUEUED", { jobId: job.jobId, loanId, tenantName: tenant.tenantName, feeCount: payload.fees.length });
+         log("INFO", "WRITE_ENQUEUED", { jobId: job.jobId, loanId, tenantName: tenant.tenantName, kind });
          return json(202, { status: "ACCEPTED", jobId: job.jobId, loanId, statusUrl: `/v1/jobs/${job.jobId}` });
          }
          async function jobStatus(apiKeyId, jobId) {
@@ -564,6 +582,10 @@ Resources:
          if ((match = /^\/v1\/loans\/([^/]+)\/fees$/.exec(path))) {
          if (method !== "PATCH") return error(405, "Method not allowed");
          return await enqueueWrite(event, apiKeyId, decode(match[1]));
+         }
+         if ((match = /^\/v1\/loans\/([^/]+)\/conditions$/.exec(path))) {
+         if (method !== "POST") return error(405, "Method not allowed");
+         return await enqueueWrite(event, apiKeyId, decode(match[1]), "conditions");
          }
          if ((match = /^\/v1\/loans\/([^/]+)$/.exec(path))) {
          const loanId = decode(match[1]);
@@ -652,20 +674,18 @@ Resources:
          conditions: blocks(xml, "CONDITION").map((c) => ({ description: tag(c, "ConditionDescription"), status: tag(c, "ConditionStatus") })),
          fees: blocks(xml, "FEE").map((f) => ({ feeType: tag(f, "FeeType"), amount: num(tag(f, "FeeActualPaymentAmount")), paidTo: tag(f, "FeePaidToName") }))
          });
-         const feesToXml = (loanId, fees) => `<?xml version="1.0" encoding="UTF-8"?>
+         const mismoUpdate = (loanId, body) => `<?xml version="1.0" encoding="UTF-8"?>
          <MESSAGE MISMOVersionID="3.4" xmlns="http://www.mismo.org/residential/2009/schemas">
          <DEAL_SETS><DEAL_SET><DEALS><DEAL><LOANS><LOAN>
          <LOAN_IDENTIFIERS><LOAN_IDENTIFIER><LoanIdentifier>${escapeXml(loanId)}</LoanIdentifier></LOAN_IDENTIFIER></LOAN_IDENTIFIERS>
-         <FEES>${fees.map((fee) => `
-         <FEE><FEE_DETAIL>
-         <FeeType>${escapeXml(fee.feeType)}</FeeType>
-         <FeeActualPaymentAmount>${Number(fee.amount).toFixed(2)}</FeeActualPaymentAmount>
-         <FeePaidToName>${escapeXml(fee.paidTo ?? "")}</FeePaidToName>
-         </FEE_DETAIL></FEE>`).join("")}
-         </FEES>
+         ${body}
          </LOAN></LOANS></DEAL></DEALS></DEAL_SET></DEAL_SETS>
          </MESSAGE>`;
-         module.exports = { parseLoan, feesToXml, escapeXml };
+         const feesToXml = (loanId, fees) =>
+         mismoUpdate(loanId, `<FEES>${fees.map((fee) => `<FEE><FEE_DETAIL><FeeType>${escapeXml(fee.feeType)}</FeeType><FeeActualPaymentAmount>${Number(fee.amount).toFixed(2)}</FeeActualPaymentAmount><FeePaidToName>${escapeXml(fee.paidTo ?? "")}</FeePaidToName></FEE_DETAIL></FEE>`).join("")}</FEES>`);
+         const conditionsToXml = (loanId, conditions) =>
+         mismoUpdate(loanId, `<CONDITIONS>${conditions.map((c) => `<CONDITION><ConditionDescription>${escapeXml(c.description)}</ConditionDescription><ConditionStatus>${escapeXml(c.status)}</ConditionStatus></CONDITION>`).join("")}</CONDITIONS>`);
+         module.exports = { parseLoan, feesToXml, conditionsToXml, escapeXml };
          },
          "roles.js": (module, exports, require) => {
          const { timingSafeEqual } = require("node:crypto");
@@ -716,38 +736,29 @@ Resources:
          <style>
          :root { color-scheme: dark; }
          * { box-sizing: border-box; }
-         body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 24px; background: #0f172a; color: #e2e8f0; font: 15px/1.5 system-ui, -apple-system, Segoe UI, sans-serif; }
-         main { width: 100%; max-width: 860px; background: #1e293b; border: 1px solid #334155; border-radius: 14px; padding: 32px; }
-         h1 { margin: 0; font-size: 22px; letter-spacing: -0.02em; }
+         body { margin: 0; padding: 20px; background: #0f172a; color: #e2e8f0; font: 15px/1.5 system-ui, sans-serif; }
+         main { max-width: 860px; margin: auto; padding: 24px; background: #1e293b; border: 1px solid #334155; border-radius: 12px; }
+         h1 { margin: 0; font-size: 21px; }
          h2 { margin: 0 0 8px; font-size: 15px; }
-         p.sub { margin: 6px 0 24px; color: #94a3b8; font-size: 13px; }
-         label { display: block; margin: 16px 0 6px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: #94a3b8; font-weight: 600; }
-         input { width: 100%; padding: 10px 12px; border-radius: 8px; border: 1px solid #334155; background: #0f172a; color: #f8fafc; font: inherit; }
-         input:focus { outline: 2px solid #6366f1; outline-offset: 1px; }
-         button { width: 100%; margin-top: 20px; padding: 12px; border: 0; border-radius: 8px; background: #4f46e5; color: #fff; font: inherit; font-weight: 600; cursor: pointer; }
-         button:hover { background: #6366f1; }
-         button:disabled { opacity: 0.6; cursor: progress; }
-         button.secondary { width: auto; margin: 10px 0 0; padding: 8px 12px; background: #334155; font-size: 12px; }
-         .hint { margin: 6px 0 0; font-size: 12px; color: #64748b; }
+         p.sub, .hint { margin: 6px 0 16px; color: #94a3b8; font-size: 13px; }
+         label { display: block; margin: 14px 0 6px; font-size: 11px; text-transform: uppercase; color: #94a3b8; }
+         input { width: 100%; padding: 9px 10px; border: 1px solid #334155; border-radius: 8px; background: #0f172a; color: #f8fafc; font: inherit; }
+         button { margin-top: 14px; padding: 9px 12px; border: 0; border-radius: 8px; background: #4f46e5; color: #fff; font: inherit; font-weight: 600; cursor: pointer; }
          .hidden { display: none; }
-         .error { margin-top: 16px; padding: 10px 12px; border-radius: 8px; background: #450a0a; border: 1px solid #7f1d1d; color: #fecaca; font-size: 13px; }
-         .notice { margin: 18px 0; padding: 14px; border-radius: 10px; background: #0f172a; border: 1px solid #334155; color: #cbd5e1; font-size: 13px; }
-         .invite { margin: 18px 0 4px; }
-         .badge { display: inline-block; padding: 4px 10px; border-radius: 999px; background: #312e81; color: #c7d2fe; font-size: 12px; font-weight: 600; }
-         .ok { margin-top: 20px; padding: 16px; border-radius: 10px; background: #0f172a; border: 1px solid #065f46; }
-         .ok h2 { margin: 0 0 8px; font-size: 14px; color: #34d399; }
-         .keyrow { display: flex; gap: 8px; margin-bottom: 14px; }
-         .keyrow input { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: #fde68a; font-size: 13px; }
-         .keyrow button { width: auto; margin: 0; padding: 0 14px; background: #334155; }
-         pre { margin: 0 0 4px; padding: 12px; background: #020617; border-radius: 8px; overflow-x: auto; font-size: 12px; color: #cbd5e1; }
+         .error { margin-top: 14px; padding: 9px 11px; border-radius: 8px; background: #450a0a; color: #fecaca; font-size: 13px; }
+         .notice, .ok, .invite { margin: 14px 0; padding: 12px; background: #0f172a; border: 1px solid #334155; border-radius: 8px; font-size: 13px; }
+         .keyrow { display: flex; gap: 8px; margin-bottom: 12px; }
+         .keyrow button { width: auto; margin: 0; }
+         pre { margin: 0 0 4px; padding: 10px; overflow-x: auto; background: #020617; border-radius: 8px; font-size: 12px; }
          a { color: #a5b4fc; font-size: 12px; }
-         .docs { margin-top: 28px; border-top: 1px solid #334155; padding-top: 20px; }
-         .table-wrap { overflow-x: auto; margin-top: 12px; }
+         .docs { margin-top: 20px; padding-top: 16px; }
+         .table-wrap { overflow-x: auto; }
          table { width: 100%; border-collapse: collapse; font-size: 12px; }
-         th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #1e293b; white-space: nowrap; }
-         th { color: #94a3b8; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; }
-         td.path { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: #fde68a; }
-         code { background: #020617; padding: 1px 5px; border-radius: 4px; font-size: 12px; color: #c7d2fe; }
+         th, td { padding: 7px 9px; text-align: left; border-bottom: 1px solid #1e293b; }
+         th { color: #94a3b8; font-size: 11px; text-transform: uppercase; }
+         td.path { color: #fde68a; }
+         td.path, code, pre { font-family: ui-monospace, Menlo, monospace; }
+         code { padding: 1px 4px; background: #020617; border-radius: 4px; color: #c7d2fe; }
          </style>
          </head>
          <body>
@@ -880,7 +891,7 @@ Resources:
          };
          return {
          getLoan: (loanId) => call(`/api/mismo/v3_4/loans/${encodeURIComponent(loanId)}`, { headers: { Accept: "application/xml" } }),
-         updateFees: (loanId, xml) =>
+         updateLoan: (loanId, xml) =>
          call(`/api/mismo/v3_4/loans/${encodeURIComponent(loanId)}`, {
          method: "PATCH",
          headers: { Accept: "application/json", "Content-Type": "application/xml" },
@@ -893,17 +904,16 @@ Resources:
          module.exports = { createMeridian };
          },
          "writes.js": (module, exports, require) => {
-         const { feesToXml } = require("./mismo");
          const { log } = require("./log");
          const RETRYABLE = (status) => status === 423 || status === 429 || status >= 500;
          const fail = (store, job, attempts, error, now) => store.putJob({ ...job, status: "FAILED", attempts, error, updatedAt: new Date(now()).toISOString() });
-         async function processWrite({ job, fees, meridian, store, attempts, maxAttempts = 5, now = Date.now }) {
+         async function processWrite({ job, mismo, meridian, store, attempts, maxAttempts = 5, now = Date.now }) {
          if (!job) return log("WARN", "JOB_NOT_FOUND", { attempts });
          if (job.status === "COMPLETED") return;
          const updatedAt = () => new Date(now()).toISOString();
          let response;
          try {
-         response = await meridian.updateFees(job.loanId, feesToXml(job.loanId, fees));
+         response = await meridian.updateLoan(job.loanId, mismo);
          } catch (err) {
          log("WARN", "WRITE_TRANSPORT_ERROR", { jobId: job.jobId, loanId: job.loanId, attempts, message: err.message });
          if (attempts >= maxAttempts) return void (await fail(store, job, attempts, err.message, now), log("ERROR", "WRITE_ATTEMPTS_EXHAUSTED", { jobId: job.jobId, attempts }));

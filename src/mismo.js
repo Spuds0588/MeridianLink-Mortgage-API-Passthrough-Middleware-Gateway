@@ -32,18 +32,18 @@ const parseLoan = (xml) => ({
   fees: blocks(xml, "FEE").map((f) => ({ feeType: tag(f, "FeeType"), amount: num(tag(f, "FeeActualPaymentAmount")), paidTo: tag(f, "FeePaidToName") }))
 });
 
-const feesToXml = (loanId, fees) => `<?xml version="1.0" encoding="UTF-8"?>
+const mismoUpdate = (loanId, body) => `<?xml version="1.0" encoding="UTF-8"?>
 <MESSAGE MISMOVersionID="3.4" xmlns="http://www.mismo.org/residential/2009/schemas">
   <DEAL_SETS><DEAL_SET><DEALS><DEAL><LOANS><LOAN>
     <LOAN_IDENTIFIERS><LOAN_IDENTIFIER><LoanIdentifier>${escapeXml(loanId)}</LoanIdentifier></LOAN_IDENTIFIER></LOAN_IDENTIFIERS>
-    <FEES>${fees.map((fee) => `
-      <FEE><FEE_DETAIL>
-        <FeeType>${escapeXml(fee.feeType)}</FeeType>
-        <FeeActualPaymentAmount>${Number(fee.amount).toFixed(2)}</FeeActualPaymentAmount>
-        <FeePaidToName>${escapeXml(fee.paidTo ?? "")}</FeePaidToName>
-      </FEE_DETAIL></FEE>`).join("")}
-    </FEES>
+    ${body}
   </LOAN></LOANS></DEAL></DEALS></DEAL_SET></DEAL_SETS>
 </MESSAGE>`;
 
-module.exports = { parseLoan, feesToXml, escapeXml };
+const feesToXml = (loanId, fees) =>
+  mismoUpdate(loanId, `<FEES>${fees.map((fee) => `<FEE><FEE_DETAIL><FeeType>${escapeXml(fee.feeType)}</FeeType><FeeActualPaymentAmount>${Number(fee.amount).toFixed(2)}</FeeActualPaymentAmount><FeePaidToName>${escapeXml(fee.paidTo ?? "")}</FeePaidToName></FEE_DETAIL></FEE>`).join("")}</FEES>`);
+
+const conditionsToXml = (loanId, conditions) =>
+  mismoUpdate(loanId, `<CONDITIONS>${conditions.map((c) => `<CONDITION><ConditionDescription>${escapeXml(c.description)}</ConditionDescription><ConditionStatus>${escapeXml(c.status)}</ConditionStatus></CONDITION>`).join("")}</CONDITIONS>`);
+
+module.exports = { parseLoan, feesToXml, conditionsToXml, escapeXml };
