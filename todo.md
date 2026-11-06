@@ -31,6 +31,9 @@ Legend: `[ ]` pending · `[~]` in progress · `[x]` done · `[—]` deliberately
 - [x] Retry classification: `423`/`429`/`5xx`/transport retried; permanent rejections `FAILED`
 - [x] `GET /v1/jobs/{jobId}` with tenant ownership (foreign jobs → `404`)
 - [x] Job TTL, no fee payload persisted in the job record
+- [x] Broker capability audit (2026-11-06): partial 1003 read, fee-only writes, no document or condition writes
+- [x] `PATCH /v1/loans/{id}` returns `501` instead of acting as an undocumented fees alias
+- [—] Full 1003 read/write, borrower document upload, and condition responses (blocked: needs sanitized MeridianLink MISMO samples plus confirmed vendor endpoints; inventing shapes would violate the no-guess rule)
 
 ## Phase 5 — Self-Serve Onboarding (sister-project parity)
 

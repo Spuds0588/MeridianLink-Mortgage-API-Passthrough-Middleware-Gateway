@@ -4,6 +4,36 @@ Append-only. Newest entries at the top. Never rewrite past entries; add a correc
 
 ---
 
+## 2026-11-06 — Broker capability audit; unsupported loan writes now say so
+
+**Finding.** Broker keys (`TPO_BROKER`) read identity (name, email), property, terms, conditions, and lock
+status, and can queue fee updates. They do **not** get a full 1003: the parser has no employment, income,
+assets, liabilities, or declarations sections, and the mask allowlist has no paths for them. There is also no
+write path for 1003 fields, borrower documents, or condition responses. The recovered dev-doc intent was
+broader ("Keep: 1003 Data, Milestones, Conditions, Rate Lock Status"), but implementing it requires real
+MeridianLink MISMO shapes and document transport; guessing them would violate the repository's no-invented-
+endpoints rule and produce a tested-but-fictional contract.
+
+**Changed**
+
+- `PATCH /v1/loans/{id}` now returns `501` with "Only fee writes are supported; 1003, document, and condition
+  writes are not implemented" instead of silently behaving as an undocumented fees alias. `PATCH
+  /v1/loans/{id}/fees` is unchanged.
+- `test/gateway.test.js`: a broker read-contract test (exact top-level keys, borrower name/email only, 1003
+  sections asserted absent) and a broker write-scope test (loan PATCH `501`, document and condition routes
+  `404`, fee write `202`).
+- `README.md`: broker workflow coverage matrix, the `501` row in the API table, and the limitation explaining
+  what is missing and why. `llms.txt`: broker coverage bullet so agents do not build against absent paths.
+- `index.html`: broker FAQ entry plus the matching `FAQPage` JSON-LD question.
+- `todo.md`: audit and `501` marked done; full 1003, document upload, and condition responses recorded as
+  blocked on sanitized vendor samples.
+
+**Verified.** `npm run verify`: 50 tests, 50 pass, 0 fail; `template.yaml` regenerated and still under the
+CloudFormation limit at 50,916 bytes. Not verified: any real 1003 MISMO shape, document endpoint, condition
+merge semantics, or live AWS/MeridianLink behavior.
+
+---
+
 ## 2026-11-06 — Purge the original dev-doc transcript
 
 **Why.** `chat-branch-of-encompass-api-middle-google-ai-studio-2026-11-06-1602.md` was the 87 KB build

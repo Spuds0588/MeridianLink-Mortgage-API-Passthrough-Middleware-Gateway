@@ -97,6 +97,7 @@ curl -s "$GATEWAY_URL/v1/jobs/$JOB_ID" -H "x-api-key: $KEY"
 | `GET` | `/v1/fields?ids=11,646,CX.TITLE.STATUS` | `x-api-key` | `{ "11": { description, type }, … }` |
 | `GET` | `/v1/loans/{id}` | `x-api-key` | masked loan JSON |
 | `PATCH` | `/v1/loans/{id}/fees` body `{ "fees": [{ "feeType": "…", "amount": 1350 }] }` | `x-api-key` | `202 { status, jobId, loanId, statusUrl }` |
+| `PATCH` | `/v1/loans/{id}` | `x-api-key` | `501` — only fee writes are implemented |
 | `GET` | `/v1/jobs/{id}` | `x-api-key` | `{ jobId, loanId, status, attempts, createdAt, updatedAt, error }` |
 
 Job statuses: `PENDING` → `RETRYING` → `COMPLETED` / `FAILED`. Fee arrays are capped at 100 items.
@@ -114,6 +115,26 @@ Job statuses: `PENDING` → `RETRYING` → `COMPLETED` / `FAILED`. Fee arrays ar
 | `TITLE_VENDOR` | property address, loan terms, fees | borrower identity, SSN, credit score, conditions |
 | `TPO_BROKER` | property, terms, borrower name/email, conditions, lock status | SSN, credit score, other-org data |
 | `AMC_VENDOR` | property (incl. legal description), appraisal contact, loan type/amount | borrower identity, fees, conditions |
+
+### Broker workflow coverage (verified against the local handler)
+
+Broker keys (`TPO_BROKER`) carry the widest read allowlist, but the API does not yet cover a full 1003,
+borrower documents, or condition responses. This is the current contract, asserted by `test/gateway.test.js`:
+
+| Broker need | Current API | Status |
+| --- | --- | --- |
+| Identity, property, terms, lock status | `GET /v1/loans/{id}` | Supported |
+| Conditions, read-only | `conditions[]` on the loan read | Supported |
+| Fee updates | `PATCH /v1/loans/{id}/fees` | Supported |
+| Full 1003 read | loan read | **Partial** — no employment, income, assets, liabilities, or declarations |
+| Full 1003 write | `PATCH /v1/loans/{id}` | **Not implemented** — returns `501` |
+| Borrower document upload | none | **Not implemented** |
+| Respond to or update conditions | none | **Not implemented** |
+
+SSN and credit score remain excluded for every persona by design. The missing write paths are blocked on
+sanitized MeridianLink MISMO samples: the gateway does not invent vendor tag names, document transport, or
+condition-merge semantics. A broker key still cannot pass a full 1003 through this API, so integrations that
+need that must wait for a contributed shape rather than assume it works.
 
 ## Architecture
 
@@ -186,6 +207,11 @@ MeridianLink payload shapes, and the egress IP allowlist remain unverified. See 
 Other known limits: invite codes are global per role (rotate via stack parameters; no single-use or
 revocation UI), one shared usage plan/quota for all tenants, no CORS (server-to-server expected), and
 no admin dashboard. Read responses are not cached server-side by design.
+
+Broker coverage is intentionally narrow today: reads include identity, property, terms, conditions, and
+lock status, and only fees are writable. A full 1003 submission, borrower document upload, and condition
+responses need real MISMO shapes and vendor endpoint confirmation; until then `PATCH /v1/loans/{id}`
+returns `501` rather than pretending to accept a loan update.
 
 ## Docs
 

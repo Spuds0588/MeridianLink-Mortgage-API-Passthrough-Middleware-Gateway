@@ -61,6 +61,11 @@
         },
         {
           "@type": "Question",
+          "name": "Can a broker submit a full 1003, upload documents, or respond to conditions?",
+          "acceptedAnswer": { "@type": "Answer", "text": "Not yet. Broker keys read identity, property, terms, conditions, and lock status, and can queue fee updates. Full 1003 sections, borrower document upload, and condition responses have no write path: PATCH /v1/loans/{id} returns 501, and document or condition routes are not implemented. Adding them needs sanitized MeridianLink MISMO samples." }
+        },
+        {
+          "@type": "Question",
           "name": "Has this been verified against a live MeridianLink tenant or AWS?",
           "acceptedAnswer": { "@type": "Answer", "text": "No. The maintainer has no MeridianLink or AWS access. The template is structurally tested and the inline Lambda bundle is executed locally, but live tenant and deployed-stack validation is a shared community responsibility." }
         }
@@ -311,6 +316,10 @@ npm run build     # regenerate dist/gateway.js and template.yaml</code></pre>
       <details>
         <summary>What has not been verified?</summary>
         <p>A real CloudFormation deployment, API Gateway key creation, DynamoDB and SQS behavior, live MeridianLink authentication, loan reads and writes, the static egress allowlist, and real MISMO response shapes. The template is structurally tested and the inline Lambda bundle is executed locally; that is different from a live tenant.</p>
+      </details>
+      <details>
+        <summary>Can a broker submit a full 1003, upload borrower documents, or respond to conditions?</summary>
+        <p>Not yet. Broker keys can read identity, property, terms, conditions, and lock status, and can queue fee updates. Full 1003 sections (employment, income, assets, liabilities, declarations), borrower document upload, and condition responses have no write path: <code>PATCH /v1/loans/&#123;id&#125;</code> returns <code>501</code>, and document or condition routes are not implemented. Adding them needs sanitized MeridianLink MISMO samples, because the gateway will not invent vendor shapes.</p>
       </details>
       <details>
         <summary>Why is the invite model role-scoped instead of open?</summary>

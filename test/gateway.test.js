@@ -297,6 +297,40 @@ test("job status is scoped to the owning API key", async (t) => {
   assert.equal((await call("GET", "/v1/jobs/job_missing", { apiKeyId: owner.apiKeyId })).statusCode, 404);
 });
 
+test("broker read exposes identity, property, terms and conditions but no 1003 detail", async (t) => {
+  const { call, tenantKey } = await setup(t);
+  const broker = await tenantKey({ role: "broker", code: INVITES.broker, tenantName: "Acme Brokers", email: "dev@acme.test" });
+
+  const body = JSON.parse((await call("GET", "/v1/loans/ML-998822", { apiKeyId: broker.apiKeyId })).body);
+  assert.deepEqual(Object.keys(body).sort(), ["borrower", "conditions", "loanId", "lockStatus", "milestone", "property", "terms"]);
+  assert.deepEqual(Object.keys(body.borrower).sort(), ["email", "name"]);
+  assert.deepEqual(Object.keys(body.terms).sort(), ["estimatedClosingDate", "loanAmount", "loanType", "noteRate"]);
+  assert.equal(body.conditions.length, 2);
+
+  // Documented gap: the parser has no 1003 employment/income/assets/liabilities/declarations sections yet.
+  for (const section of ["employment", "income", "assets", "liabilities", "declarations", "documents"]) {
+    assert.equal(body[section], undefined, `${section} must stay absent until a real MISMO shape is contributed`);
+  }
+});
+
+test("broker writes are limited to fees; 1003, document and condition writes fail loudly", async (t) => {
+  const { call, tenantKey } = await setup(t);
+  const broker = await tenantKey({ role: "broker", code: INVITES.broker, tenantName: "Acme Brokers", email: "dev@acme.test" });
+
+  const loanPatch = await call("PATCH", "/v1/loans/ML-998822", { apiKeyId: broker.apiKeyId, body: { borrower: { name: "Dana Borrower" } } });
+  assert.equal(loanPatch.statusCode, 501);
+  assert.match(JSON.parse(loanPatch.body).error, /Only fee writes are supported/);
+
+  assert.equal((await call("POST", "/v1/loans/ML-998822/documents", { apiKeyId: broker.apiKeyId, body: { name: "paystub.pdf" } })).statusCode, 404);
+  assert.equal((await call("PATCH", "/v1/loans/ML-998822/conditions/1", { apiKeyId: broker.apiKeyId, body: { status: "Satisfied" } })).statusCode, 404);
+
+  const fees = await call("PATCH", "/v1/loans/ML-998822/fees", {
+    apiKeyId: broker.apiKeyId,
+    body: { fees: [{ feeType: "BrokerCompensation", amount: 500 }] }
+  });
+  assert.equal(fees.statusCode, 202);
+});
+
 test("unknown routes and wrong methods are rejected", async (t) => {
   const { call } = await setup(t);
   assert.equal((await call("GET", "/v1/nope")).statusCode, 404);

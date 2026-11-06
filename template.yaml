@@ -567,7 +567,7 @@ Resources:
          if ((match = /^\/v1\/loans\/([^/]+)$/.exec(path))) {
          const loanId = decode(match[1]);
          if (method === "GET") return await readLoan(event, apiKeyId, loanId);
-         if (method === "PATCH") return await enqueueWrite(event, apiKeyId, loanId);
+         if (method === "PATCH") return error(501, "Only fee writes are supported; 1003, document, and condition writes are not implemented");
          return error(405, "Method not allowed");
          }
          if ((match = /^\/v1\/jobs\/([^/]+)$/.exec(path))) {

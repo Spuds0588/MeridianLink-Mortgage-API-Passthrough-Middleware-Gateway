@@ -80,5 +80,6 @@ All `/v1/*` routes require `x-api-key`. The portal and health check are the only
 
 - Verified locally and in CI: routing, invite validation and persona locking, masking and NPI pruning, field schema lookup and cache, reads, async writes with retry classification, job ownership, template sync and size, and execution of the exact inline Lambda bundle.
 - Not verified by the maintainers: a real CloudFormation deployment, API Gateway key creation, DynamoDB/SQS behavior, live MeridianLink authentication, loan reads and writes, the static egress IP allowlist, and real MISMO response shapes for any tenant.
+- Broker coverage: reads expose identity, property, terms, conditions, and lock status; fee writes are supported. A full 1003 (employment, income, assets, liabilities, declarations), borrower document upload, and condition responses are not implemented; `PATCH /v1/loans/{id}` returns `501`. Do not build a broker integration that assumes those paths exist.
 - Known limitations: one shared usage plan, global per-role invite codes rather than single-use vendor invites, no revocation UI, no CORS, no admin dashboard, and a curated cheat sheet that only covers common JSON paths.
 - The landing page is served from GitHub Pages. The API is deployed separately into each lender's AWS account.
