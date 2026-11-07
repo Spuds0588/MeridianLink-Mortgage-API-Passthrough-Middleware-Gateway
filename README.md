@@ -187,6 +187,13 @@ npm run verify    # build --check + tests
 The local stack runs the real handler against `mock/meridian.js` and an in-memory AWS stand-in. Mock
 loans: `ML-998822` (normal), `ML-LOCKED-1` (always `423`), `ML-404` (missing).
 
+### Production check (opt-in)
+
+`npm run verify:production` fetches the live GitHub Pages URL, retries through Pages deploy lag, and requires
+the served HTML to byte-match `index.html` (SHA-256). It stays out of `npm run verify` so the offline suite
+never depends on the network. The same command reports `/portal`: GitHub Pages serves only the static page,
+so the invite portal's persona rendering cannot be exercised there until the AWS API is deployed.
+
 ## Repository layout
 
 ```

@@ -18,6 +18,7 @@ const issueConfig = read(".github/ISSUE_TEMPLATE/config.yml");
 const prTemplate = read(".github/pull_request_template.md");
 const robots = read("robots.txt");
 const sitemap = read("sitemap.xml");
+const pkg = JSON.parse(read("package.json"));
 
 // Markdown wraps prose; match phrases in flowing text, not raw lines.
 const flat = (text) => text.replace(/\s+/g, " ");
@@ -117,6 +118,13 @@ test("CONTRIBUTING.md explains the issue and pull-request workflow", () => {
   assert.match(flat(contributing), /happy to add contributors/i);
   assert.match(flat(contributing), /Never include API keys/);
   assert.match(flat(contributing), /template\.yaml` must stay in sync/);
+});
+
+test("production check is opt-in, documented, and not part of the offline suite", () => {
+  assert.equal(pkg.scripts["verify:production"], "node scripts/verify-production.js");
+  assert.ok(fs.existsSync(path.join(root, "scripts/verify-production.js")));
+  assert.match(flat(readme), /npm run verify:production/);
+  assert.doesNotMatch(pkg.scripts.verify, /verify-production/);
 });
 
 test("README points newcomers at every community surface", () => {

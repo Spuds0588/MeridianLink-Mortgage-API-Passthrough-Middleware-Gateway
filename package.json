@@ -8,6 +8,7 @@
     "build": "node scripts/build.js",
     "test": "node --test test/",
     "verify": "node scripts/build.js --check && node --test test/",
+    "verify:production": "node scripts/verify-production.js",
     "dev": "node dev/server.js"
   },
   "engines": {
