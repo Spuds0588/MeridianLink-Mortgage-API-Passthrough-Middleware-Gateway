@@ -4,6 +4,47 @@ Append-only. Newest entries at the top. Never rewrite past entries; add a correc
 
 ---
 
+## 2026-11-06 — Production check: Pages matches source; the persona portal is not deployed
+
+**Finding.** The live GitHub Pages surface is the static `index.html`, not the invite portal. A browser-style
+fetch of the canonical URL, followed by a `/portal` request, returned:
+
+```text
+live_status=200
+live_sha256=ba3f3055596ae591a42fee73ba6fbb940c3389bd403e0dd4ef9258204b13800f
+repo_sha256=ba3f3055596ae591a42fee73ba6fbb940c3389bd403e0dd4ef9258204b13800f
+served_page_matches_commit=yes
+inline_scripts=1
+json_ld_types=WebSite,SoftwareSourceCode,FAQPage
+portal_status=404
+portal_route=absent (the invite portal is served by the Lambda handler, not Pages)
+persona_endpoint_execution=blocked: no deployed API
+```
+
+The page contains one inline JSON-LD block and no executable endpoint-rendering script. Its only script is
+structured data. The persona filtering test at `test/portal.test.js` executes the script produced by
+`src/portal.js`, but that handler is only reachable through the Lambda/API deployment, which does not exist.
+Asserting persona lists against the Pages URL would therefore be a fabricated check, not production evidence.
+
+**Changed**
+
+- `scripts/verify-production.js`: opt-in live check with deploy-lag retries; requires byte equality between the
+  served HTML and `index.html`, parses every inline script block, and reports whether `/portal` exists.
+- `package.json`: `npm run verify:production` (network only; not part of offline `npm run verify`).
+- `README.md`: documents the command and why persona rendering cannot be verified on Pages yet.
+- `test/static.test.js`: guards that the production script exists, is documented, and stays out of the default
+  verify path.
+
+**Verified.** `npm run verify:production` exits 0 with the output above. `npm run verify`: **60 tests, 60 pass,
+0 fail**; template unchanged at **50,135 bytes, 1,065 bytes under the 51,200-byte limit**. The live page is
+byte-identical to the committed source, so it is neither stale nor divergent.
+
+**Not closed.** Production persona endpoint execution remains blocked by the missing AWS API deployment, not by
+the static page being wrong. EDocs shapes and `/edocs` remain mock-only, uploads remain capped at 180,000 bytes,
+full 1003 and per-loan organization scoping remain blocked, and the template has only 1,065 bytes of headroom.
+
+---
+
 ## 2026-11-06 — Portal persona filtering proven by executing the shipped page
 
 **Why.** The previous portal change was only evidenced by string matches and a syntax check. The endpoint

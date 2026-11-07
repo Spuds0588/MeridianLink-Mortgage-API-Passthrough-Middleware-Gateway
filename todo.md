@@ -9,6 +9,8 @@ Legend: `[ ]` pending · `[~]` in progress · `[x]` done · `[—]` deliberately
 - [x] Loan document upload/download: `POST /v1/loans/{id}/documents` (broker persona, base64 PDF, 180,000-byte SQS cap), `GET /v1/loans/{id}/documents`, and `GET /v1/loans/{id}/documents/{docId}` through `EDocsService.asmx` with a cached `AuthService.asmx` ticket (commit `93d43e7`)
 - [x] Portal onboarding shows the invited role its real surface: title/broker fee writes, broker condition submission, and broker document upload/list/download, plus condition paths in the cheat sheet (commit `db6a97c`)
 - [x] Portal persona filtering proven by executing the served inline script against a document stub: title and broker see fee writes, broker also sees conditions plus document upload/list/download, appraisal sees no fee write. The test exposed and removed an appraisal-only fee curl (commit `3301d52`)
+- [x] Opt-in live Pages check: `npm run verify:production` fetched the deployed page (200), required byte equality with `index.html` (SHA-256 match), and reported `/portal` 404 (commit `d6e8c33`)
+- [—] Persona endpoint rendering verified in production (blocked: GitHub Pages serves only the static `index.html`, which has no endpoint script, and `/portal` returns 404; the invite portal is served by the Lambda handler and no AWS API is deployed)
 - [—] Live EDocs validation (blocked: no MeridianLink tenant; the SOAP response shapes and default `/edocs` mount path are verified only against `mock/meridian.js`)
 
 ## Phase 1 — Core Infrastructure
@@ -76,5 +78,6 @@ Legend: `[ ]` pending · `[~]` in progress · `[x]` done · `[—]` deliberately
 - [x] Purged the original dev-doc transcript; its requirements now live in `README.md`, `AGENTS.md`, `llms.txt`, and `CONTRIBUTING.md`
 - [—] Enable GitHub Discussions so the support contact can move off the issues list (maintainer action; verified 404 today)
 - [x] GitHub Pages enabled on `main` / root (2026-11-06); canonical page served at the project Pages URL
+- [x] Opt-in `npm run verify:production`: retries Pages lag, requires the live HTML to byte-match `index.html`, and reports the missing `/portal` route; it stays out of offline `npm run verify` (commit `d6e8c33`)
 - [x] `robots.txt` + `sitemap.xml` so crawlers find the canonical page and the agent-facing `llms.txt`
 - [—] Contributor invitations and a designated triage rotation (maintainer action)
