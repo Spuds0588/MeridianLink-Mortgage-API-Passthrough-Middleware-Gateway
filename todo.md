@@ -7,6 +7,7 @@ Legend: `[ ]` pending · `[~]` in progress · `[x]` done · `[—]` deliberately
 
 - [x] Condition submission: `POST /v1/loans/{id}/conditions` (broker persona) queued through FIFO as MISMO `<CONDITIONS>`, matched by description (commit `1ba6fd1`)
 - [x] Loan document upload/download: `POST /v1/loans/{id}/documents` (broker persona, base64 PDF, 180,000-byte SQS cap), `GET /v1/loans/{id}/documents`, and `GET /v1/loans/{id}/documents/{docId}` through `EDocsService.asmx` with a cached `AuthService.asmx` ticket (commit `93d43e7`)
+- [x] Portal onboarding shows the invited role its real surface: title/broker fee writes, broker condition submission, and broker document upload/list/download, plus condition paths in the cheat sheet (commit `db6a97c`)
 - [—] Live EDocs validation (blocked: no MeridianLink tenant; the SOAP response shapes and default `/edocs` mount path are verified only against `mock/meridian.js`)
 
 ## Phase 1 — Core Infrastructure
@@ -56,6 +57,7 @@ Legend: `[ ]` pending · `[~]` in progress · `[x]` done · `[—]` deliberately
 
 - [x] `scripts/build.js`: bundle `src/` → readable `dist/gateway.js`, minify the inlined copy (comments/whitespace, no dependency), 51,200-byte guard, `--check`
 - [x] Template headroom restored: 49,173 bytes, 2,027 bytes under the limit, with a 1 KB minimum enforced by `test/template.test.js` (commit `93d43e7`)
+- [x] Portal endpoint list consumes headroom: 50,010 bytes, 1,190 bytes under the limit, still above the 1 KB guard (commit `db6a97c`)
 - [x] `infra/template.yaml`: VPC + NAT + static EIP, DynamoDB, SQS FIFO + DLQ, Secrets Manager, API Gateway usage plan, inline Lambda
 - [x] `deploy.sh` one-line CloudShell installer (prompts for Meridian creds, generates invite codes, prints invite links + egress IP)
 - [x] CI (`.github/workflows/ci.yml`): tests + template-sync on Node 20 and 24

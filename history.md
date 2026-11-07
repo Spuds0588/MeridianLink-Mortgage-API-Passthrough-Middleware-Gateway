@@ -4,6 +4,31 @@ Append-only. Newest entries at the top. Never rewrite past entries; add a correc
 
 ---
 
+## 2026-11-06 — Portal advertises the broker condition and document endpoints
+
+**Why.** Priority 1 made conditions and documents the main broker workflows, but the invite portal still
+printed only loan reads, fee writes, jobs, and fields after provisioning. A broker had no in-product hint
+that the document or condition routes existed and had to leave the portal for the README.
+
+**Changed**
+
+- `src/portal.js`: the success panel now lists endpoints by persona — title and broker get fee writes, broker
+  also gets condition submission, document upload, document list, and document download; appraisal sees only
+  reads, jobs, and fields. Broker keys get two extra curl examples (`@conditions.json`, `@document.json`).
+- `src/portal.js`: the cheat sheet adds `conditions[].description` and `conditions[].status`, the two paths a
+  broker actually writes.
+- `test/gateway.test.js`: the portal test asserts the condition paths and the document download route are
+  present in the shipped page.
+- `README.md`: states that the portal lists the endpoints the invited role can actually call.
+- `template.yaml`: regenerated to inline the portal change.
+
+**Verified.** The rendered inline script parses with `new Function`, and `npm run verify` gives 58 tests,
+58 pass, 0 fail. Template: **50,010 bytes, 1,190 bytes under the 51,200-byte limit** (was 49,173 / 2,027);
+the 1 KB headroom guard still passes. Not verified: the persona filtering was not exercised in a browser, only
+its shipped strings and script syntax are asserted, and no deployed API exists to serve the portal.
+
+---
+
 ## 2026-11-06 — AWS deployment probe: blocked on CLI and account credentials
 
 **Probe.** Checked whether this machine can deploy the template before asserting anything about a live API.
