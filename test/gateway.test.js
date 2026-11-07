@@ -58,6 +58,8 @@ test("portal landing requires an invite link and publishes the field cheat sheet
   assert.match(res.body, /Invite link required/);
   assert.match(res.body, /terms\.loanAmount/);
   assert.match(res.body, /fees\[\]\.amount/);
+  assert.match(res.body, /conditions\[\]\.status/);
+  assert.match(res.body, /\/documents\/\{documentId\}/);
   assert.doesNotMatch(res.body, /admin token/i);
 });
 

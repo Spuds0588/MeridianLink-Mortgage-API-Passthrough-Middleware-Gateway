@@ -83,7 +83,8 @@ curl -s "$GATEWAY_URL/v1/jobs/$JOB_ID" -H "x-api-key: $KEY"
   the vendor enters a company name and developer email; the gateway locks the key to that role's persona
   server-side. No admin token and no per-vendor admin work.
 - **Field discovery** — `GET /v1/fields?ids=…` proxies definitions from MeridianLink and caches them per
-  persona for 5 minutes. The portal publishes a common-path cheat sheet.
+  persona for 5 minutes. The portal publishes a common-path cheat sheet plus the endpoints the invited role
+  can actually call — title/broker fee writes, and broker conditions plus document upload/list/download.
 - **One-file deployment** — one CloudFormation template under the direct-upload limit with the Lambda
   bundle inlined; no S3 bucket, no zip, no build step in AWS.
 - **Static egress IP** — the template provisions a VPC, NAT gateway, and Elastic IP so MeridianLink can

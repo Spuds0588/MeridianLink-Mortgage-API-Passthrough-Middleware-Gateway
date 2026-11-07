@@ -11,6 +11,8 @@ const FIELD_CATALOG = [
   ["Milestones", "Current milestone", "milestone", "STRING", '"Underwriting"'],
   ["Fees", "Fee type", "fees[].feeType", "STRING", '"TitleLenderCoveragePremium"'],
   ["Fees", "Fee amount", "fees[].amount", "DECIMAL", "1250.00"],
+  ["Conditions", "Description", "conditions[].description", "STRING", '"Updated title commitment"'],
+  ["Conditions", "Status", "conditions[].status", "STRING", '"Satisfied"'],
   ["Appraisal", "Appraisal contact", "appraisalContact", "STRING", '"Acme Appraisal Co"']
 ];
 
@@ -135,16 +137,29 @@ const renderPortal = ({ role, error } = {}) => {
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(data.error || 'Failed to generate key');
         const base = location.origin;
-        $('apiKey').value = data.apiKey;
-        $('endpoints').textContent = lines([
+        const broker = data.persona === 'TPO_BROKER';
+        const endpoints = [
           'GET    ' + base + '/v1/loans/{loanId}',
-          'PATCH  ' + base + '/v1/loans/{loanId}/fees',
           'GET    ' + base + '/v1/jobs/{jobId}',
           'GET    ' + base + '/v1/fields?ids=11,646,CX.TITLE.STATUS'
-        ]);
+        ];
+        if (data.persona !== 'AMC_VENDOR') endpoints.push('PATCH  ' + base + '/v1/loans/{loanId}/fees');
+        if (broker) endpoints.push(
+          'POST   ' + base + '/v1/loans/{loanId}/conditions',
+          'POST   ' + base + '/v1/loans/{loanId}/documents',
+          'GET    ' + base + '/v1/loans/{loanId}/documents',
+          'GET    ' + base + '/v1/loans/{loanId}/documents/{documentId}'
+        );
+        $('apiKey').value = data.apiKey;
+        $('endpoints').textContent = lines(endpoints);
         $('curl').textContent = lines([
           'curl -s "' + base + '/v1/loans/ML-998822" -H "x-api-key: ' + data.apiKey + '"',
           'curl -s -X PATCH "' + base + '/v1/loans/ML-998822/fees" -H "x-api-key: ' + data.apiKey + '" -H "content-type: application/json" -d \\'{"fees":[{"feeType":"TitleLenderCoveragePremium","amount":1350}]}\\''
+        ]);
+        if (broker) $('curl').textContent += lines([
+          '',
+          'curl -s -X POST "' + base + '/v1/loans/ML-998822/conditions" -H "x-api-key: ' + data.apiKey + '" -H "content-type: application/json" -d @conditions.json',
+          'curl -s -X POST "' + base + '/v1/loans/ML-998822/documents" -H "x-api-key: ' + data.apiKey + '" -H "content-type: application/json" -d @document.json'
         ]);
         hide('form');
         show('result');
