@@ -4,6 +4,31 @@ Append-only. Newest entries at the top. Never rewrite past entries; add a correc
 
 ---
 
+## 2026-11-06 — Portal persona filtering proven by executing the shipped page
+
+**Why.** The previous portal change was only evidenced by string matches and a syntax check. The endpoint
+list is built by client-side code after provisioning, so those checks could pass while the rendered list
+was wrong for a persona.
+
+**Test.** `test/portal.test.js` requests `/portal` through the real handler, extracts the `<script>` block
+from the served HTML exactly as a browser receives it, and executes it with a hand-rolled document stub
+(`getElementById`, `classList`, one captured submit handler) plus a fetch stub that returns a chosen persona.
+It then asserts the rendered endpoint list and curl block for `TITLE_VENDOR`, `TPO_BROKER`, and
+`AMC_VENDOR`. No DOM package is installed.
+
+**Found and fixed.** The appraisal endpoint list already hid fee writes, but the curl block was built
+unconditionally and still printed a fee PATCH the persona cannot use. `src/portal.js` now resets that block to
+the read-only curl for `AMC_VENDOR`. `template.yaml` is regenerated.
+
+**Verified.** `npm run verify`: **59 tests, 59 pass, 0 fail**. Template: **50,135 bytes, 1,065 bytes under the
+51,200-byte limit** — 41 bytes above the 1 KB headroom guard, so the next code change needs to trim before it
+adds. The executable test fails if any persona's endpoint list regresses.
+
+**Not verified.** This is a document stub, not a real browser: layout, clipboard, and reload behavior are not
+exercised. No deployed API or MeridianLink tenant exists to serve the portal.
+
+---
+
 ## 2026-11-06 — Portal advertises the broker condition and document endpoints
 
 **Why.** Priority 1 made conditions and documents the main broker workflows, but the invite portal still
