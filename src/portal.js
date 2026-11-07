@@ -161,6 +161,7 @@ const renderPortal = ({ role, error } = {}) => {
           'curl -s -X POST "' + base + '/v1/loans/ML-998822/conditions" -H "x-api-key: ' + data.apiKey + '" -H "content-type: application/json" -d @conditions.json',
           'curl -s -X POST "' + base + '/v1/loans/ML-998822/documents" -H "x-api-key: ' + data.apiKey + '" -H "content-type: application/json" -d @document.json'
         ]);
+        if (data.persona === 'AMC_VENDOR') $('curl').textContent = 'curl -s "' + base + '/v1/loans/ML-998822" -H "x-api-key: ' + data.apiKey + '"';
         hide('form');
         show('result');
       } catch (err) {
