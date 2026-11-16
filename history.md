@@ -4,6 +4,23 @@ Append-only. Newest entries at the top. Never rewrite past entries; add a correc
 
 ---
 
+## 2026-11-16 — CI fixed on Node 24: test glob, not a directory
+
+**Finding from the push.** The docs commit turned CI red, but not because of the docs:
+`npm test` ran `node --test test/`, and Node 24 resolves that as a module path
+(`MODULE_NOT_FOUND`). It passed locally only because this machine runs Node 20.19.2. The
+same defect was already fixed in BytePro (`3932b29`) and jXchange, so this was a known
+class of breakage waiting in this repo.
+
+**Fix.** `test` and `verify` now use `node --test test/*.test.js`, matching the sister
+repos. No test was removed, skipped, or weakened: the same 60 tests run under both
+runtimes, and the directory form was never the assertion anyone wanted.
+
+**Verification.** Local `npm run verify` → **60 tests, 60 pass, 0 fail**, template
+unchanged at 50,135 bytes. CI re-run recorded after the push.
+
+
+
 ## 2026-11-16 — Per-key loan ownership binding designed; blocked by template headroom
 
 **Encompass shipped it.** Its keys now bind to one Encompass user, verified at enrollment

@@ -6,8 +6,8 @@
   "main": "src/lambda.js",
   "scripts": {
     "build": "node scripts/build.js",
-    "test": "node --test test/",
-    "verify": "node scripts/build.js --check && node --test test/",
+    "test": "node --test test/*.test.js",
+    "verify": "node scripts/build.js --check && node --test test/*.test.js",
     "verify:production": "node scripts/verify-production.js",
     "dev": "node dev/server.js"
   },
