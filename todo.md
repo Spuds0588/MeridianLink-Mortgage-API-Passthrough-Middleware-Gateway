@@ -13,6 +13,19 @@ Legend: `[ ]` pending · `[~]` in progress · `[x]` done · `[—]` deliberately
 - [—] Persona endpoint rendering verified in production (blocked: GitHub Pages serves only the static `index.html`, which has no endpoint script, and `/portal` returns 404; the invite portal is served by the Lambda handler and no AWS API is deployed)
 - [—] Live EDocs validation (blocked: no MeridianLink tenant; the SOAP response shapes and default `/edocs` mount path are verified only against `mock/meridian.js`)
 
+## Priority 1 (sister-project parity) — Encompass loan-file documents, underwriting conditions, and loan submission
+
+Parity track with `Encompass-API-Passthrough-Middleware-Gateway-`. MeridianLink already ships documents and broker condition submission; the remaining items here are the underwriting-condition surfaces and loan registration/submission convention that must exist for feature polarity across the family.
+
+- [ ] Underwriting condition read/list: read and list underwriting/preliminary/post-closing enhanced or standard conditions for a loan with the appropriate persona scope
+- [ ] Condition document association: associate condition evidence documents (prior-to-docs, prior-to-funding, post-closing evidence) to a condition through the same persona-guarded capability MeridianLink already exposes for fee and document writes
+- [ ] Standard condition lifecycle: create, read, update, fulfill/close standard conditions for underwriting, preliminary, and postclosing as a broker action
+- [ ] Loan registration (milestone flip): accept a full loan contract for registration and return the created loan id, with a milestone-aware submit action that flips the loan to the next submittal stage
+- [ ] Loan submission/status: expose loan submittal, resubmittal, and milestone state where MeridianLink exposes an equivalent workflow, so the surface matches the sibling repos’ loan lifecycle
+- [ ] Shared contract guard: the guest-facing read surface should describe these as sibling-project parity items, with MeridianLink-specific implementation differences optional and documented, not assumed identical to Encompass
+- [x] Implementation note / discovery stub: recorded in `docs/parity-implementation-notes.md` (2026-11-16) — EDocs SOAP documents, MISMO `<CONDITIONS>` submission, and the fact that no documented MeridianLink submit route exists to call, so submission would be modelled as a sequence of MISMO updates until a live tenant says otherwise
+- [—] BLOCKED: live MeridianLink tenant or sanitized MeridianLink response captures to confirm document/condition/milestone surface shapes and the loan submission convention
+
 ## Phase 1 — Core Infrastructure
 
 - [x] Zero-dependency Node runtime, API-Gateway-shaped events (`src/app.js`, `src/server.js`, `src/lambda.js`)

@@ -4,6 +4,23 @@ Append-only. Newest entries at the top. Never rewrite past entries; add a correc
 
 ---
 
+## 2026-11-16 — Daily check clear; parity research notes landed and the discovery stub is answered
+
+**Daily check.** Zero open issues, zero open PRs, and zero closed issues/PRs across all four family repos
+(Encompass, MeridianLink, jXchange, BytePro). Nothing needed an answer, so no request was outstanding.
+
+**Research landed.** Added `docs/parity-implementation-notes.md` recording what this gateway would actually
+call for the parity track: documents through `EDocsService.asmx` (`ListEdocsByLoanNumber`,
+`UploadPDFDocument`, `DownloadEdocsPdfById`) behind a cached `AuthService.asmx` ticket, conditions as MISMO
+`<CONDITIONS>` blocks matched by description, and loan registration/submission as a sequence of MISMO
+updates — this repo has no documented MeridianLink submit route to call, so a "submit" here would be a
+gateway-assembled MISMO `<MESSAGE>` update, not a vendor endpoint.
+
+**Scope.** The discovery-stub todo is ticked against that note. Research only: no runtime code changed, no
+route added, no test count moved. Live-tenant shapes, the milestone/submittal convention, and the
+organization-scoping gap stay BLOCKED exactly as they were.
+
+
 ## 2026-11-06 — Production check: Pages matches source; the persona portal is not deployed
 
 **Finding.** The live GitHub Pages surface is the static `index.html`, not the invite portal. A browser-style
