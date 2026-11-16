@@ -45,6 +45,16 @@ The parts that already help:
    payload in this repo carries no loan-to-organization field, so there is nothing honest
    to compare against yet.
 
+## Entitlement is a separate check
+
+Binding a key to a vendor user is only half the control. The other half is deciding *which*
+user a given partner may bind. In Encompass that is now an explicit step: every invite is
+bound to one pre-authorized login, and a different login is refused before a key is minted,
+because otherwise anyone holding an invite link can claim any user the actor can reach.
+Carry the same rule here: the invite the lender issues must name the vendor login it
+authorizes, and enrollment must compare against that rather than accepting a login the caller
+types.
+
 ## Open vendor questions
 
 - Which MeridianLink operation confirms the identity behind a ticket, so enrollment can
