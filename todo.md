@@ -17,6 +17,8 @@ Legend: `[ ]` pending · `[~]` in progress · `[x]` done · `[—]` deliberately
 
 Parity track with `Encompass-API-Passthrough-Middleware-Gateway-`. MeridianLink already ships documents and broker condition submission; the remaining items here are the underwriting-condition surfaces and loan registration/submission convention that must exist for feature polarity across the family.
 
+- [ ] Per-key bound MeridianLink user (leaked-loan-id hardening): bind each key to its own MeridianLink user and request that user's `AuthService.asmx` ticket, so MeridianLink enforces loan visibility instead of the shared deployment credential. Plan and open vendor questions in `docs/loan-ownership-binding.md`
+- [—] BLOCKED: per-key binding cannot land until the template gains headroom (41 free bytes under the 1 KB guard); requires S3-hosted template delivery like Encompass
 - [ ] Underwriting condition read/list: read and list underwriting/preliminary/post-closing enhanced or standard conditions for a loan with the appropriate persona scope
 - [ ] Condition document association: associate condition evidence documents (prior-to-docs, prior-to-funding, post-closing evidence) to a condition through the same persona-guarded capability MeridianLink already exposes for fee and document writes
 - [ ] Standard condition lifecycle: create, read, update, fulfill/close standard conditions for underwriting, preliminary, and postclosing as a broker action

@@ -4,6 +4,27 @@ Append-only. Newest entries at the top. Never rewrite past entries; add a correc
 
 ---
 
+## 2026-11-16 — Per-key loan ownership binding designed; blocked by template headroom
+
+**Encompass shipped it.** Its keys now bind to one Encompass user, verified at enrollment
+through impersonation plus `GET /company/users/me`, so Encompass decides loan visibility and
+a foreign loan id returns `404` (Encompass `npm run verify`: 95/95).
+
+**MeridianLink is the easiest port on paper.** This repo already requests per-user tickets
+from `AuthService.asmx`, so binding means going from one shared ticket to a ticket per bound
+user and letting MeridianLink enforce visibility across reads, fee writes, EDocs, and MISMO
+conditions. The unconfirmed piece is an identity operation that reports which user a ticket
+belongs to; without it, enrollment would be trusting the form again.
+
+**Why no code.** `template.yaml` is 50,135 bytes against a 51,200-byte cap with 1,024 bytes
+reserved by `test/template.test.js` — 41 bytes free. The feature cannot be squeezed in
+without deleting the guard or trimming documented portal features, which would be defeating
+the check. See `docs/loan-ownership-binding.md`.
+
+**Verification.** No source changed, so the suite is unchanged: `npm run verify` still green
+at 60 tests, template untouched at 50,135 bytes.
+
+
 ## 2026-11-16 — Daily check clear; parity research notes landed and the discovery stub is answered
 
 **Daily check.** Zero open issues, zero open PRs, and zero closed issues/PRs across all four family repos
